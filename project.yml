@@ -1,0 +1,64 @@
+name: AgentOSControl
+
+options:
+  bundleIdPrefix: com.jeantreves
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    # No signing identity on this Mac: ad hoc everywhere (macos-app-facts.md).
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  AgentOSControl:
+    type: application
+    platform: macOS
+    sources:
+      - path: AgentOSControl
+    info:
+      path: AgentOSControl/Info.plist
+      properties:
+        CFBundleDisplayName: AgentOS Control
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Menu bar resident: no Dock icon; the window is opened from the menu.
+        LSUIElement: true
+        # The host listens on plain http://127.0.0.1:3107.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jeantreves.agentoscontrol
+        # The space gives "/Applications/AgentOS Control.app" and `pgrep -x "AgentOS Control"`;
+        # the module name stays importable.
+        PRODUCT_NAME: AgentOS Control
+        PRODUCT_MODULE_NAME: AgentOSControl
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+    scheme:
+      testTargets:
+        - AgentOSControlTests
+
+  AgentOSControlTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: AgentOSControlTests
+    dependencies:
+      - target: AgentOSControl
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.jeantreves.agentoscontrol.tests
+        # XcodeGen derives the host from the target name; the product name has a space.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/AgentOS Control.app/Contents/MacOS/AgentOS Control"
+        BUNDLE_LOADER: $(TEST_HOST)
