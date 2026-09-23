@@ -1,0 +1,293 @@
+import Foundation
+import Testing
+@testable import AgentOSControl
+
+private let deadline = Date(timeIntervalSince1970: 1_790_000_300)
+private let approval = Approval(
+    id: "3f2b9c1e-7a44-4d0e-9b1a-0c5d2e8f6a71", ts: 1_790_000_000, capability: "file_write",
+    target: "README.md (append one line)", runId: "8d1e4b2a-5c6f-4a7b-9e0d-1f2a3b4c5d6e", timeoutAt: 1_790_000_300)
+
+private func state(_ phase: ApprovalPhase) -> ApprovalState { ApprovalState(approval: approval, phase: phase) }
+
+private func run(_ events: [ApprovalEvent], from phase: ApprovalPhase = .pending) -> ApprovalPhase {
+    events.reduce(state(phase)) { $0.applying($1) }.phase
+}
+
+@Suite struct ApprovalStateMachineTests {
+    @Test func approveGoesThroughPresenceThenDeciding() {
+        #expect(run([.userApproved]) == .awaitingPresence)
+        #expect(run([.userApproved, .presenceConfirmed]) == .deciding(approve: true))
+        #expect(run([.userApproved, .presenceConfirmed, .decisionSucceeded]) == .approved)
+    }
+
+    @Test func failedOrCancelledPresenceReturnsToPendingAndSendsNothing() {
+        #expect(run([.userApproved, .presenceFailed]) == .pending)
+    }
+
+    @Test func denySkipsPresence() {
+        #expect(run([.userDenied]) == .deciding(approve: false))
+        #expect(run([.userDenied, .decisionSucceeded]) == .denied)
+    }
+
+    @Test func failedDecisionCanBeRetried() {
+        #expect(run([.userDenied, .decisionFailed]) == .pending)
+        #expect(run([.userDenied, .decisionFailed, .userApproved]) == .awaitingPresence)
+    }
+
+    @Test func secondClickWhileBusyIsIgnored() {
+        #expect(run([.userApproved, .userApproved]) == .awaitingPresence)
+        #expect(run([.userApproved, .userDenied]) == .awaitingPresence)
+        #expect(run([.userDenied, .userApproved]) == .deciding(approve: false))
+    }
+
+    @Test func vanishingBeforeTheDeadlineMeansResolvedElsewhere() {
+        #expect(run([.vanished(at: deadline.addingTimeInterval(-1))]) == .resolvedElsewhere(approved: nil))
+    }
+
+    @Test func vanishingAtTheDeadlineIsExpired() {
+        #expect(run([.vanished(at: deadline)]) == .expired)
+        #expect(run([.userApproved, .vanished(at: deadline)]) == .expired)
+    }
+
+    @Test func expiryDuringTouchIDDropsTheLateConfirmation() {
+        #expect(run([.userApproved, .vanished(at: deadline), .presenceConfirmed]) == .expired)
+    }
+
+    @Test func remoteResolutionDuringTouchIDDropsTheLateConfirmation() {
+        #expect(run([.userApproved, .resolvedRemotely(approved: false), .presenceConfirmed])
+            == .resolvedElsewhere(approved: false))
+    }
+
+    @Test func ownEchoFromTheSocketCompletesTheDecision() {
+        #expect(run([.userApproved, .presenceConfirmed, .resolvedRemotely(approved: true)]) == .approved)
+        #expect(run([.userDenied, .resolvedRemotely(approved: false), .decisionFailed]) == .denied)
+    }
+
+    @Test func conflictingSocketDecisionWins() {
+        #expect(run([.userApproved, .presenceConfirmed, .resolvedRemotely(approved: false)])
+            == .resolvedElsewhere(approved: false))
+    }
+
+    @Test func vanishingWhileDecidingWaitsForTheResponse() {
+        #expect(run([.userDenied, .vanished(at: deadline)]) == .deciding(approve: false))
+    }
+
+    @Test(arguments: [
+        ApprovalPhase.approved, .denied, .expired, .resolvedElsewhere(approved: nil), .resolvedElsewhere(approved: true),
+    ])
+    func terminalPhasesIgnoreEverything(terminal: ApprovalPhase) {
+        let events: [ApprovalEvent] = [
+            .userApproved, .presenceConfirmed, .presenceFailed, .userDenied, .decisionSucceeded,
+            .decisionFailed, .resolvedRemotely(approved: true), .vanished(at: deadline),
+        ]
+        for event in events { #expect(run([event], from: terminal) == terminal) }
+        #expect(!terminal.isOpen)
+    }
+
+    @Test func countdownNeverBuildsAnInvertedRange() {
+        let late = deadline.addingTimeInterval(60)
+        #expect(approval.countdown(from: late) == late...late)
+        let early = deadline.addingTimeInterval(-60)
+        #expect(approval.countdown(from: early) == early...deadline)
+    }
+}
+
+@Suite struct ApprovalBookTests {
+    private let other = Approval(
+        id: "b7c8d9e0-1f2a-4b3c-8d4e-5f6a7b8c9d0e", ts: 1_790_000_010, capability: nil, target: nil,
+        runId: nil, timeoutAt: 1_790_000_310)
+
+    @Test func newApprovalsOpenAsPendingInArrivalOrder() {
+        let book = ApprovalBook().reconciled(with: [other, approval], now: deadline)
+        #expect(book.open.map(\.approval.id) == [approval.id, other.id])
+        #expect(book.open.allSatisfy { $0.phase == .pending })
+    }
+
+    @Test func knownApprovalsKeepTheirPhase() {
+        let book = ApprovalBook().reconciled(with: [approval], now: deadline)
+            .applying(.userApproved, to: approval.id)
+            .reconciled(with: [approval], now: deadline)
+        #expect(book[approval.id]?.phase == .awaitingPresence)
+    }
+
+    @Test func decidedButStillListedIsNotReopened() {
+        // A poll that started before our POST completed still lists the approval.
+        let book = ApprovalBook().reconciled(with: [approval], now: deadline)
+            .applying(.userDenied, to: approval.id)
+            .applying(.decisionSucceeded, to: approval.id)
+            .reconciled(with: [approval], now: deadline)
+        #expect(book[approval.id]?.phase == .denied)
+        #expect(book.open.isEmpty)
+    }
+
+    @Test func missingApprovalsCloseThenGetPruned() {
+        let early = deadline.addingTimeInterval(-10)
+        let closed = ApprovalBook().reconciled(with: [approval, other], now: early)
+            .reconciled(with: [other], now: early)
+        #expect(closed[approval.id]?.phase == .resolvedElsewhere(approved: nil))
+        #expect(closed.open.map(\.approval.id) == [other.id])
+        let pruned = closed.reconciled(with: [other], now: early)
+        #expect(pruned[approval.id] == nil)
+    }
+
+    @Test func eventsForUnknownIDsAreIgnored() {
+        let book = ApprovalBook().reconciled(with: [approval], now: deadline)
+        #expect(book.applying(.userApproved, to: "unknown") == book)
+    }
+}
+
+@Suite struct ApprovalContextTests {
+    @Test func takesRuleAndProfileFromTheLastAskDecisionAndTheTaskTitle() throws {
+        let events = try JSONDecoder.host.decode(JournalProbe.self, from: Data(Fixture.journal.utf8)).events
+        let tasks = try JSONDecoder.host.decode(TasksProbe.self, from: Data(Fixture.tasks.utf8)).tasks
+        let context = ApprovalContext(events: events, capability: "file_write", tasks: tasks)
+        #expect(context == ApprovalContext(rule: "ask.file_write", profile: "ask", taskTitle: "Sample task"))
+        #expect(context.summary == "tâche « Sample task » · profil ask · règle ask.file_write")
+    }
+
+    @Test func emptyJournalGivesAnEmptySummary() {
+        let context = ApprovalContext(events: [], capability: "terminal", tasks: [])
+        #expect(context.summary.isEmpty)
+    }
+}
+
+private struct JournalProbe: Decodable { let events: [JournalEvent] }
+private struct TasksProbe: Decodable { let tasks: [AgentTask] }
+
+extension JSONDecoder {
+    static var host: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }
+}
+
+/// Counts Touch ID prompts and answers with a fixed result.
+actor PresenceProbe {
+    private(set) var prompts = 0
+    func prompt() { prompts += 1 }
+}
+
+private func routedClient(recorder: RequestRecorder) -> HostClient {
+    // Fixtures are main-actor state; the transport is @Sendable, so capture the strings.
+    let (pending, journal, tasks) = (Fixture.pending, Fixture.journal, Fixture.tasks)
+    return HostClient(
+        baseURL: URL(string: "http://127.0.0.1:3107")!,
+        token: { "test-token" },
+        transport: { request in
+            await recorder.record(request)
+            let body = switch (request.httpMethod ?? "", request.url?.path() ?? "") {
+            case ("GET", "/api/approvals/pending"): pending
+            case ("GET", "/api/journal"): journal
+            case ("GET", "/api/tasks"): tasks
+            case ("POST", "/api/killswitch"): #"{"killswitch":true}"#
+            default: #"{"status":"ok"}"#
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (Data(body.utf8), response)
+        })
+}
+
+@Suite struct ApprovalFlowTests {
+    let recorder = RequestRecorder()
+    let probe = PresenceProbe()
+    let id = "3f2b9c1e-7a44-4d0e-9b1a-0c5d2e8f6a71"
+
+    private func model(present: Bool) -> ControlModel {
+        let probe = probe
+        return ControlModel(
+            client: routedClient(recorder: recorder),
+            presence: HumanPresence { _ in
+                await probe.prompt()
+                return present
+            },
+            notifier: nil, socket: nil)
+    }
+
+    private func posts() async -> [String] {
+        await recorder.requests.filter { $0.httpMethod == "POST" }.map { $0.url?.query() ?? "" }
+    }
+
+    @Test func refreshLoadsApprovalsWithTheirContext() async {
+        let model = model(present: true)
+        await model.refreshApprovals()
+        #expect(model.openApprovals.map(\.approval.id) == [id, "b7c8d9e0-1f2a-4b3c-8d4e-5f6a7b8c9d0e"])
+        #expect(model.contexts[id]?.rule == "ask.file_write")
+        #expect(model.hostReachable == true)
+    }
+
+    @Test func refusedTouchIDSendsNothing() async {
+        let model = model(present: false)
+        await model.refreshApprovals()
+        await model.approve(id)
+        #expect(await probe.prompts == 1)
+        #expect(await posts().isEmpty)
+        #expect(model.openApprovals.first?.phase == .pending)
+    }
+
+    @Test func confirmedTouchIDSendsExactlyOneApprove() async {
+        let model = model(present: true)
+        await model.refreshApprovals()
+        await model.approve(id)
+        #expect(await posts() == ["approval_id=\(id)&decision=approve"])
+        #expect(model.openApprovals.map(\.approval.id) == ["b7c8d9e0-1f2a-4b3c-8d4e-5f6a7b8c9d0e"])
+    }
+
+    @Test func denyNeedsNoTouchID() async {
+        let model = model(present: false)
+        await model.refreshApprovals()
+        await model.deny(id)
+        #expect(await probe.prompts == 0)
+        #expect(await posts() == ["approval_id=\(id)&decision=deny"])
+    }
+
+    @Test func notificationActionOnAnUnknownApprovalRefreshesFirst() async {
+        let model = model(present: true)
+        await model.handleNotificationAction(approvalID: id, approve: false)
+        #expect(await posts() == ["approval_id=\(id)&decision=deny"])
+    }
+
+    @Test func notificationActionOnAGoneApprovalSendsNothing() async {
+        let model = model(present: true)
+        await model.handleNotificationAction(approvalID: "0f0f0f0f-0000-4000-8000-000000000000", approve: true)
+        #expect(await probe.prompts == 0)
+        #expect(await posts().isEmpty)
+    }
+
+    @Test func killSwitchNeedsTouchIDBothWays() async {
+        let refused = model(present: false)
+        await refused.setKillSwitch(true)
+        #expect(await posts().isEmpty)
+        let allowed = model(present: true)
+        await allowed.setKillSwitch(true)
+        #expect(await posts() == ["state=true"])
+        #expect(allowed.killSwitchOn)
+    }
+
+    @Test func socketResolutionClosesTheApproval() async {
+        let model = model(present: true)
+        await model.refreshApprovals()
+        model.handle(.approvalResolved(id: id, approved: false))
+        #expect(model.openApprovals.count == 1)
+        model.handle(.killSwitch(true))
+        #expect(model.killSwitchOn)
+    }
+
+    @Test(arguments: [
+        (Bool?.none, false, false, 0, "circle.dashed"),
+        (false, true, true, 3, "bolt.slash"),
+        (true, true, true, 3, "stop.circle.fill"),
+        (true, false, true, 3, "exclamationmark.triangle"),
+        (true, false, false, 3, "hand.raised.fill"),
+        (true, false, false, 0, "checkmark.shield"),
+    ])
+    func statusSymbolPriority(reachable: Bool?, killSwitch: Bool, breakerOpen: Bool, pending: Int, symbol: String) {
+        #expect(ControlModel.statusSymbol(
+            reachable: reachable, killSwitch: killSwitch, breakerOpen: breakerOpen, pending: pending) == symbol)
+    }
+
+    @Test func settingsDetectTheTestHost() {
+        #expect(AppSettings.current().isUnderTest)
+        #expect(AppSettings.current().hostURL.absoluteString == "http://127.0.0.1:3107")
+    }
+}
