@@ -160,6 +160,19 @@ func makeClient(
         #expect(try await makeClient(body: #"{"ok":true}"#, recorder: recorder).health())
     }
 
+    @Test func onlyDeepHealthWaitsLongerThanTheSessionTimeout() async throws {
+        _ = try await makeClient(body: Fixture.deepHealth, recorder: recorder).deepHealth()
+        _ = try await makeClient(body: #"{"ok":true}"#, recorder: recorder).health()
+        let sent = await recorder.requests
+        #expect(sent.map { $0.url?.path() } == ["/api/health/deep", "/api/health"])
+        // URLSession applies its own 5 s unless the request sets a value (measured 2026-09-25: an
+        // explicit 15 s answered after 8 s, the untouched default of 60 timed out at 5 s).
+        let untouched = URLRequest(url: try #require(sent[1].url)).timeoutInterval
+        // Hermès then Ollama at 4 s each: a slow probe must not read as "host unreachable".
+        #expect(sent[0].timeoutInterval != untouched && sent[0].timeoutInterval >= 15)
+        #expect(sent[1].timeoutInterval == untouched)
+    }
+
     @Test(arguments: [(true, "approve"), (false, "deny")])
     func decideSendsQueryParamsAndBearer(approve: Bool, decision: String) async throws {
         let client = makeClient(body: #"{"status":"ok","decision":"\#(decision)"}"#, recorder: recorder)

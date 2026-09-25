@@ -50,6 +50,10 @@ actor HostClient {
         self.transport = transport
     }
 
+    /// `deep_check` probes Hermès then Ollama at 4 s each. A request's own `timeoutInterval`
+    /// overrides the session's 5 s (measured 2026-09-25), so only this call waits longer.
+    static let deepHealthTimeout: TimeInterval = 15
+
     /// Local host: fail fast, never cache responses on disk.
     static let urlSession: Transport = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -66,7 +70,7 @@ actor HostClient {
     }
 
     func deepHealth() async throws(HostError) -> DeepHealth {
-        try await get(DeepHealth.self, "/api/health/deep")
+        try await get(DeepHealth.self, "/api/health/deep", timeout: Self.deepHealthTimeout)
     }
 
     func killSwitch() async throws(HostError) -> Bool {
@@ -129,10 +133,13 @@ actor HostClient {
 
     // MARK: Plumbing
 
+    /// `timeout` nil keeps the session's 5 s.
     private func get<T: Decodable>(
-        _ type: T.Type, _ path: String, query: [String: String] = [:]
+        _ type: T.Type, _ path: String, query: [String: String] = [:], timeout: TimeInterval? = nil
     ) async throws(HostError) -> T {
-        try decode(type, try await perform(makeRequest("GET", path, query: query)))
+        var request = makeRequest("GET", path, query: query)
+        if let timeout { request.timeoutInterval = timeout }
+        return try decode(type, try await perform(request))
     }
 
     private func send(
