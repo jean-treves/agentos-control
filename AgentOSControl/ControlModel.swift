@@ -129,14 +129,15 @@ final class ControlModel {
     // MARK: Actions
 
     func approve(_ id: String) async {
-        guard transition(id, .userApproved) == .awaitingPresence, let approval = book[id]?.approval else { return }
+        guard transition(id, .userApproved, from: .pending) != nil, let approval = book[id]?.approval else { return }
         let present = await presence.verify("approuver « \(approval.capability ?? "une action") » pour AgentOS")
-        guard case .deciding = transition(id, present ? .presenceConfirmed : .presenceFailed) else { return }
+        let event: ApprovalEvent = present ? .presenceConfirmed : .presenceFailed
+        guard transition(id, event, from: .awaitingPresence) == .deciding(approve: true) else { return }
         await send(id, approve: true)
     }
 
     func deny(_ id: String) async {
-        guard case .deciding = transition(id, .userDenied) else { return }
+        guard transition(id, .userDenied, from: .pending) != nil else { return }
         await send(id, approve: false)
     }
 
@@ -173,6 +174,14 @@ final class ControlModel {
     // MARK: Plumbing
 
     private var openIDs: Set<String> { Set(book.open.map(\.id)) }
+
+    /// Applies `event` only from `phase`, nil otherwise. The machine turns an out-of-turn event into
+    /// a no-op that keeps the phase, so the phase after it cannot tell "moved" from "ignored": a second
+    /// Approve during Touch ID, or a Deny during the approve POST, would pass for the first one.
+    private func transition(_ id: String, _ event: ApprovalEvent, from phase: ApprovalPhase) -> ApprovalPhase? {
+        guard book[id]?.phase == phase else { return nil }
+        return transition(id, event)
+    }
 
     @discardableResult
     private func transition(_ id: String, _ event: ApprovalEvent) -> ApprovalPhase? {

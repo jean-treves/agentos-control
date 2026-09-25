@@ -162,13 +162,42 @@ extension JSONDecoder {
     }
 }
 
+/// Holds the first caller until `open()` and lets later ones straight through: a Touch ID sheet
+/// left open, or a POST still in flight, while a second click comes in.
+actor FirstCallGate {
+    private(set) var arrivals = 0
+    private var isOpen = false
+    private var held: CheckedContinuation<Void, Never>?
+
+    func pass() async {
+        arrivals += 1
+        guard arrivals == 1, !isOpen else { return }
+        await withCheckedContinuation { held = $0 }
+    }
+
+    func open() {
+        isOpen = true
+        held?.resume()
+        held = nil
+    }
+}
+
+/// Polls `condition` for up to 2 s, so a test can wait until a background task is held at a gate.
+func eventually(_ condition: () async -> Bool) async -> Bool {
+    for _ in 0..<2_000 {
+        if await condition() { return true }
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    return false
+}
+
 /// Counts Touch ID prompts and answers with a fixed result.
 actor PresenceProbe {
     private(set) var prompts = 0
     func prompt() { prompts += 1 }
 }
 
-private func routedClient(recorder: RequestRecorder) -> HostClient {
+private func routedClient(recorder: RequestRecorder, postGate: FirstCallGate? = nil) -> HostClient {
     // Fixtures are main-actor state; the transport is @Sendable, so capture the strings.
     let (pending, journal, tasks) = (Fixture.pending, Fixture.journal, Fixture.tasks)
     return HostClient(
@@ -176,6 +205,7 @@ private func routedClient(recorder: RequestRecorder) -> HostClient {
         token: { "test-token" },
         transport: { request in
             await recorder.record(request)
+            if request.httpMethod == "POST" { await postGate?.pass() }
             let body = switch (request.httpMethod ?? "", request.url?.path() ?? "") {
             case ("GET", "/api/approvals/pending"): pending
             case ("GET", "/api/journal"): journal
@@ -193,12 +223,13 @@ private func routedClient(recorder: RequestRecorder) -> HostClient {
     let probe = PresenceProbe()
     let id = "3f2b9c1e-7a44-4d0e-9b1a-0c5d2e8f6a71"
 
-    private func model(present: Bool) -> ControlModel {
+    private func model(present: Bool, touchID: FirstCallGate? = nil, postGate: FirstCallGate? = nil) -> ControlModel {
         let probe = probe
         return ControlModel(
-            client: routedClient(recorder: recorder),
+            client: routedClient(recorder: recorder, postGate: postGate),
             presence: HumanPresence { _ in
                 await probe.prompt()
+                await touchID?.pass()
                 return present
             },
             notifier: nil, socket: nil)
@@ -231,6 +262,32 @@ private func routedClient(recorder: RequestRecorder) -> HostClient {
         await model.approve(id)
         #expect(await posts() == ["approval_id=\(id)&decision=approve"])
         #expect(model.openApprovals.map(\.approval.id) == ["b7c8d9e0-1f2a-4b3c-8d4e-5f6a7b8c9d0e"])
+    }
+
+    @Test func secondApproveWhileTouchIDIsOpenPromptsOnceAndPostsOnce() async {
+        let touchID = FirstCallGate()
+        let model = model(present: true, touchID: touchID)
+        await model.refreshApprovals()
+        let first = Task { await model.approve(id) }
+        #expect(await eventually { await touchID.arrivals == 1 })
+        // Same approval approved again from its notification while the first Touch ID sheet is up.
+        await model.handleNotificationAction(approvalID: id, approve: true)
+        await touchID.open()
+        await first.value
+        #expect(await probe.prompts == 1)
+        #expect(await posts() == ["approval_id=\(id)&decision=approve"])
+    }
+
+    @Test func denyWhileTheApprovePOSTIsInFlightSendsNothing() async {
+        let inFlight = FirstCallGate()
+        let model = model(present: true, postGate: inFlight)
+        await model.refreshApprovals()
+        let approving = Task { await model.approve(id) }
+        #expect(await eventually { await inFlight.arrivals == 1 })
+        await model.deny(id)
+        await inFlight.open()
+        await approving.value
+        #expect(await posts() == ["approval_id=\(id)&decision=approve"])
     }
 
     @Test func denyNeedsNoTouchID() async {
