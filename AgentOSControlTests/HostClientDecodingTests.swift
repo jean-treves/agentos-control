@@ -35,9 +35,13 @@ enum Fixture {
        "prev_hash":"00","hash":"11"},
       {"v":1,"seq":41,"ts":"2026-09-23T21:06:13.500Z","run_id":null,"task_id":"t_0a1b2c3d4e","engine":null,
        "type":"health","data":{"detail":"ok","paused":"no","preflight":"ok"},"prev_hash":"11","hash":"22"},
-      {"v":1,"seq":42,"ts":"2026-09-23T21:06:14.000Z","run_id":"run_0123456789abcdef0123456789abcdef",
+      {"v":1,"seq":42,"ts":"2026-09-23T21:06:13.700Z","run_id":"run_0123456789abcdef0123456789abcdef",
+       "task_id":null,"engine":null,"type":"approval.waiting","data":{
+       "approval_id":"3f2b9c1e-7a44-4d0e-9b1a-0c5d2e8f6a71","capability":"file_write",
+       "target_excerpt":"README.md"},"prev_hash":"22","hash":"33"},
+      {"v":1,"seq":43,"ts":"2026-09-23T21:06:14.000Z","run_id":"run_0123456789abcdef0123456789abcdef",
        "task_id":"t_0a1b2c3d4e","engine":"claude","type":"approval.resolved",
-       "data":["unexpected","array"],"prev_hash":"22","hash":"33"}]}
+       "data":["unexpected","array"],"prev_hash":"33","hash":"44"}]}
     """
     static let tasks = """
     {"tasks":[
@@ -119,13 +123,14 @@ func makeClient(
     @Test func decodesJournalAndKeepsEventsWithOddPayloads() async throws {
         let events = try await makeClient(body: Fixture.journal, recorder: recorder)
             .journal(afterSeq: 39, runID: "run_0123456789abcdef0123456789abcdef")
-        #expect(events.map(\.seq) == [40, 41, 42])
+        #expect(events.map(\.seq) == [40, 41, 42, 43])
         #expect(events[0].data?.verdict == "ask")
         #expect(events[0].data?.rule == "ask.file_write")
         let stamp = try #require(events[0].date).timeIntervalSince1970
         #expect(abs(stamp - 1_790_197_572.017) < 0.001)
         #expect(events[1].engine == nil && events[1].runId == nil)
-        #expect(events[2].data == nil)
+        #expect(events[2].data?.approvalId == "3f2b9c1e-7a44-4d0e-9b1a-0c5d2e8f6a71")
+        #expect(events[3].data == nil)
         #expect(await recorder.requests.first?.url?.query()
             == "after_seq=39&run_id=run_0123456789abcdef0123456789abcdef")
     }

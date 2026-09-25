@@ -210,15 +210,31 @@ final class ControlModel {
         }
     }
 
+    /// 20 pages of the host's 500 events: enough for a long run, bounded for one that never journals
+    /// its `approval.waiting`.
+    private static let maxJournalPages = 20
+
     private func context(for approval: Approval) async -> ApprovalContext? {
         guard let runID = approval.runId else { return nil }
         do {
-            let events = try await client.journal(afterSeq: 0, runID: runID)
-            return ApprovalContext(events: events, capability: approval.capability, tasks: try await client.tasks())
+            let events = try await journal(of: runID, through: approval.id)
+            return ApprovalContext(
+                events: events, approvalID: approval.id, capability: approval.capability, tasks: try await client.tasks())
         } catch {
             logger.error("approval context unavailable: \(error.localizedDescription, privacy: .public)")
             return nil
         }
+    }
+
+    /// The run's journal up to the page holding `approval.waiting` for `approvalID`, or its end.
+    private func journal(of runID: String, through approvalID: String) async throws(HostError) -> [JournalEvent] {
+        var events: [JournalEvent] = []
+        for _ in 0..<Self.maxJournalPages {
+            let page = try await client.journal(afterSeq: events.last?.seq ?? 0, runID: runID)
+            events += page
+            if page.isEmpty || page.contains(where: { $0.waits(for: approvalID) }) { break }
+        }
+        return events
     }
 
     private func report(_ error: HostError) {

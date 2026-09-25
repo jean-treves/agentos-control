@@ -137,16 +137,22 @@ private func run(_ events: [ApprovalEvent], from phase: ApprovalPhase = .pending
 }
 
 @Suite struct ApprovalContextTests {
-    @Test func takesRuleAndProfileFromTheLastAskDecisionAndTheTaskTitle() throws {
+    @Test func takesRuleAndProfileFromTheAskBeforeTheWaitingEventAndTheTaskTitle() throws {
         let events = try JSONDecoder.host.decode(JournalProbe.self, from: Data(Fixture.journal.utf8)).events
         let tasks = try JSONDecoder.host.decode(TasksProbe.self, from: Data(Fixture.tasks.utf8)).tasks
-        let context = ApprovalContext(events: events, capability: "file_write", tasks: tasks)
+        let context = ApprovalContext(events: events, approvalID: approval.id, capability: "file_write", tasks: tasks)
         #expect(context == ApprovalContext(rule: "ask.file_write", profile: "ask", taskTitle: "Sample task"))
         #expect(context.summary == "tâche « Sample task » · profil ask · règle ask.file_write")
     }
 
+    @Test func anAskWithoutThisApprovalsWaitingEventIsNotItsContext() throws {
+        let events = try JSONDecoder.host.decode(JournalProbe.self, from: Data(Fixture.journal.utf8)).events
+        let context = ApprovalContext(events: events, approvalID: "another-approval", capability: "file_write", tasks: [])
+        #expect(context.rule == nil && context.profile == nil)
+    }
+
     @Test func emptyJournalGivesAnEmptySummary() {
-        let context = ApprovalContext(events: [], capability: "terminal", tasks: [])
+        let context = ApprovalContext(events: [], approvalID: approval.id, capability: "terminal", tasks: [])
         #expect(context.summary.isEmpty)
     }
 }
@@ -197,9 +203,33 @@ actor PresenceProbe {
     func prompt() { prompts += 1 }
 }
 
-private func routedClient(recorder: RequestRecorder, postGate: FirstCallGate? = nil) -> HostClient {
+nonisolated private let emptyJournal = #"{"events":[]}"#
+private let otherApprovalID = "c4d5e6f7-0a1b-4c2d-8e3f-4a5b6c7d8e9f"
+
+/// One `/api/journal` page of the fixture approval's run; rows are (seq, type, data JSON).
+nonisolated private func journalPage(_ rows: [(Int, String, String)]) -> String {
+    let events = rows.map { seq, type, data in
+        #"{"seq":\#(seq),"ts":"2026-09-23T21:06:12.017Z","run_id":"8d1e4b2a-5c6f-4a7b-9e0d-1f2a3b4c5d6e","#
+            + #""task_id":"t_0a1b2c3d4e","type":"\#(type)","data":\#(data)}"#
+    }
+    return #"{"events":["# + events.joined(separator: ",") + "]}"
+}
+
+nonisolated private func ask(_ seq: Int, rule: String, profile: String) -> (Int, String, String) {
+    (seq, "decision", #"{"capability":"file_write","verdict":"ask","rule":"\#(rule)","profile":"\#(profile)"}"#)
+}
+
+nonisolated private func waiting(_ seq: Int, for approvalID: String) -> (Int, String, String) {
+    (seq, "approval.waiting", #"{"approval_id":"\#(approvalID)","capability":"file_write"}"#)
+}
+
+/// `journal` serves `/api/journal` by `after_seq`; nil serves `Fixture.journal` whatever the query.
+private func routedClient(
+    recorder: RequestRecorder, postGate: FirstCallGate? = nil,
+    journal: (@Sendable (_ afterSeq: Int) -> String)? = nil
+) -> HostClient {
     // Fixtures are main-actor state; the transport is @Sendable, so capture the strings.
-    let (pending, journal, tasks) = (Fixture.pending, Fixture.journal, Fixture.tasks)
+    let (pending, journalFixture, tasks) = (Fixture.pending, Fixture.journal, Fixture.tasks)
     return HostClient(
         baseURL: URL(string: "http://127.0.0.1:3107")!,
         token: { "test-token" },
@@ -208,7 +238,9 @@ private func routedClient(recorder: RequestRecorder, postGate: FirstCallGate? = 
             if request.httpMethod == "POST" { await postGate?.pass() }
             let body = switch (request.httpMethod ?? "", request.url?.path() ?? "") {
             case ("GET", "/api/approvals/pending"): pending
-            case ("GET", "/api/journal"): journal
+            case ("GET", "/api/journal"):
+                journal?(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?
+                    .first { $0.name == "after_seq" }?.value.flatMap(Int.init) ?? 0) ?? journalFixture
             case ("GET", "/api/tasks"): tasks
             case ("POST", "/api/killswitch"): #"{"killswitch":true}"#
             default: #"{"status":"ok"}"#
@@ -223,10 +255,13 @@ private func routedClient(recorder: RequestRecorder, postGate: FirstCallGate? = 
     let probe = PresenceProbe()
     let id = "3f2b9c1e-7a44-4d0e-9b1a-0c5d2e8f6a71"
 
-    private func model(present: Bool, touchID: FirstCallGate? = nil, postGate: FirstCallGate? = nil) -> ControlModel {
+    private func model(
+        present: Bool, touchID: FirstCallGate? = nil, postGate: FirstCallGate? = nil,
+        journal: (@Sendable (_ afterSeq: Int) -> String)? = nil
+    ) -> ControlModel {
         let probe = probe
         return ControlModel(
-            client: routedClient(recorder: recorder, postGate: postGate),
+            client: routedClient(recorder: recorder, postGate: postGate, journal: journal),
             presence: HumanPresence { _ in
                 await probe.prompt()
                 await touchID?.pass()
@@ -245,6 +280,40 @@ private func routedClient(recorder: RequestRecorder, postGate: FirstCallGate? = 
         #expect(model.openApprovals.map(\.approval.id) == [id, "b7c8d9e0-1f2a-4b3c-8d4e-5f6a7b8c9d0e"])
         #expect(model.contexts[id]?.rule == "ask.file_write")
         #expect(model.hostReachable == true)
+    }
+
+    @Test func contextComesFromTheAskJustBeforeThisApprovalsWaitingEvent() async {
+        // Two approvals of one run pending at once: the later ask belongs to the other one.
+        let page = journalPage([
+            ask(1, rule: "rule.mine", profile: "ask"), waiting(2, for: id),
+            ask(3, rule: "rule.other", profile: "trusted"), waiting(4, for: otherApprovalID),
+        ])
+        let model = model(present: true, journal: { $0 == 0 ? page : emptyJournal })
+        await model.refreshApprovals()
+        #expect(model.contexts[id]?.rule == "rule.mine")
+        #expect(model.contexts[id]?.profile == "ask")
+    }
+
+    @Test func contextPagesALongRunUntilThisApprovalsWaitingEvent() async {
+        // The first page (500 events on a real host) holds another approval's ask; ours is on the next.
+        let first = journalPage([ask(1, rule: "rule.other", profile: "trusted"), waiting(2, for: otherApprovalID)])
+        let second = journalPage([ask(3, rule: "rule.mine", profile: "ask"), waiting(4, for: id)])
+        let model = model(present: true, journal: { [0: first, 2: second][$0] ?? emptyJournal })
+        await model.refreshApprovals()
+        #expect(model.contexts[id]?.rule == "rule.mine")
+        let pages = await recorder.requests.filter { $0.url?.path() == "/api/journal" }.map { $0.url?.query() ?? "" }
+        #expect(pages == [
+            "after_seq=0&run_id=8d1e4b2a-5c6f-4a7b-9e0d-1f2a3b4c5d6e",
+            "after_seq=2&run_id=8d1e4b2a-5c6f-4a7b-9e0d-1f2a3b4c5d6e",
+        ])
+    }
+
+    @Test func contextPagingStopsAfterTwentyPages() async {
+        // A run whose waiting event never shows up (Hermès gates journal none) must not page forever.
+        let model = model(present: true, journal: { journalPage([($0 + 1, "health", "{}")]) })
+        await model.refreshApprovals()
+        #expect(await recorder.requests.filter { $0.url?.path() == "/api/journal" }.count == 20)
+        #expect(model.contexts[id]?.rule == nil)
     }
 
     @Test func refusedTouchIDSendsNothing() async {

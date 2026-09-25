@@ -103,7 +103,7 @@ nonisolated struct ApprovalBook: Equatable, Sendable {
 }
 
 /// Rule, profile and task behind an approval. `GET /api/approvals/pending` carries none of them,
-/// the run's journal does (last `decision` with `verdict: ask`).
+/// the run's journal does: the `decision` with `verdict: ask` just before its `approval.waiting`.
 nonisolated struct ApprovalContext: Equatable, Sendable {
     let rule: String?
     let profile: String?
@@ -116,13 +116,22 @@ nonisolated struct ApprovalContext: Equatable, Sendable {
     }
 }
 
+extension JournalEvent {
+    nonisolated func waits(for approvalID: String) -> Bool {
+        type == "approval.waiting" && data?.approvalId == approvalID
+    }
+}
+
 extension ApprovalContext {
-    /// ponytail: reads the first 500 journal events of the run (the host's default page); a run
-    /// that asks after that shows no context. Page with `after_seq` if that ever happens.
-    nonisolated init(events: [JournalEvent], capability: String?, tasks: [AgentTask]) {
-        let ask = events.last {
-            $0.type == "decision" && $0.data?.verdict == "ask"
-                && (capability == nil || $0.data?.capability == capability)
+    /// No rule or profile when `approvalID` has no `approval.waiting` in `events` (Hermès runs journal
+    /// none): the last ask of the run could belong to another approval.
+    nonisolated init(events: [JournalEvent], approvalID: String, capability: String?, tasks: [AgentTask]) {
+        let waiting = events.firstIndex { $0.waits(for: approvalID) }
+        let ask = waiting.flatMap { index in
+            events[..<index].last {
+                $0.type == "decision" && $0.data?.verdict == "ask"
+                    && (capability == nil || $0.data?.capability == capability)
+            }
         }
         let taskId = ask?.taskId ?? events.first { $0.taskId != nil }?.taskId
         self.init(
