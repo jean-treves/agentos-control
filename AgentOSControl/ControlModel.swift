@@ -15,16 +15,17 @@ final class ControlModel {
     private(set) var killSwitchOn = false
     private(set) var breaker: BreakerStatus?
     private(set) var activeRuns: [RunSummary] = []
-    private(set) var notificationsAuthorized = true
+    /// nil until the notifier answers (or forever without one).
+    private(set) var notificationsAuthorized: Bool?
     var lastError: String?
 
     @ObservationIgnored private let presence: HumanPresence
-    @ObservationIgnored private let notifier: ApprovalNotifier?
+    @ObservationIgnored private let notifier: (any ApprovalNotifying)?
     @ObservationIgnored private let socket: ApprovalsSocket?
     @ObservationIgnored private var loops: [Task<Void, Never>] = []
     @ObservationIgnored private let logger = Logger(subsystem: "com.jeantreves.agentoscontrol", category: "model")
 
-    init(client: HostClient, presence: HumanPresence, notifier: ApprovalNotifier?, socket: ApprovalsSocket?) {
+    init(client: HostClient, presence: HumanPresence, notifier: (any ApprovalNotifying)?, socket: ApprovalsSocket?) {
         self.client = client
         self.presence = presence
         self.notifier = notifier
@@ -71,8 +72,11 @@ final class ControlModel {
     func start() {
         guard loops.isEmpty else { return }
         notifier?.install()
+        // The system prompt can stay up for minutes: polling must not wait for JT's answer.
+        if let notifier {
+            loops.append(Task { await setNotificationsAuthorized(await notifier.requestAuthorization()) })
+        }
         loops.append(Task {
-            if let notifier { notificationsAuthorized = await notifier.requestAuthorization() }
             var tick = 0
             while !Task.isCancelled {
                 await refreshApprovals()
@@ -88,6 +92,11 @@ final class ControlModel {
         }
     }
 
+    func stop() {
+        loops.forEach { $0.cancel() }
+        loops = []
+    }
+
     func refreshApprovals() async {
         let pending: [Approval]
         do { pending = try await client.pendingApprovals() } catch {
@@ -101,7 +110,7 @@ final class ControlModel {
         for state in book.open where !before.contains(state.id) {
             let context = await context(for: state.approval)
             contexts[state.id] = context
-            await notifier?.post(state.approval, context: context)
+            if notificationsAuthorized == true { await notifier?.post(state.approval, context: context) }
         }
     }
 
@@ -114,7 +123,16 @@ final class ControlModel {
         } catch {
             logger.error("status refresh failed: \(error.localizedDescription, privacy: .public)")
         }
-        if let notifier { notificationsAuthorized = await notifier.isAuthorized() }
+        if let notifier { await setNotificationsAuthorized(await notifier.isAuthorized()) }
+    }
+
+    /// Nothing is posted until notifications are allowed, so the moment they are (first answer, or
+    /// JT allowing them later in System Settings) every open approval is posted.
+    private func setNotificationsAuthorized(_ authorized: Bool) async {
+        let granted = authorized && notificationsAuthorized != true
+        notificationsAuthorized = authorized
+        guard granted else { return }
+        for state in book.open { await notifier?.post(state.approval, context: contexts[state.id]) }
     }
 
     func handle(_ message: SocketMessage) {

@@ -9,7 +9,7 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(statusLine, systemImage: model.statusSymbol).font(.headline)
-            if !model.notificationsAuthorized {
+            if model.notificationsAuthorized == false {
                 Button("Notifications désactivées : ouvrir Réglages…") { openNotificationSettings() }
             }
             if let error = model.lastError {

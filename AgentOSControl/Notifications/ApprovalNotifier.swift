@@ -1,10 +1,20 @@
 import os
 import UserNotifications
 
+/// What ControlModel needs from Notification Center (a stub in tests).
+protocol ApprovalNotifying: AnyObject {
+    var onAction: ((_ approvalID: String, _ approve: Bool) async -> Void)? { get set }
+    func install()
+    func requestAuthorization() async -> Bool
+    func isAuthorized() async -> Bool
+    func post(_ approval: Approval, context: ApprovalContext?) async
+    func withdraw(_ approvalIDs: [String])
+}
+
 /// One notification per pending approval (identifier = approval id), category `APPROVAL` with
 /// `APPROVE` and `DENY`. The delegate is mandatory: without it macOS hides banners while the app
 /// is frontmost and never reports the chosen action (macos-app-facts.md).
-final class ApprovalNotifier: NSObject, UNUserNotificationCenterDelegate {
+final class ApprovalNotifier: NSObject, UNUserNotificationCenterDelegate, ApprovalNotifying {
     nonisolated static let categoryID = "APPROVAL"
     nonisolated static let approveID = "APPROVE"
     nonisolated static let denyID = "DENY"

@@ -197,6 +197,29 @@ func eventually(_ condition: () async -> Bool) async -> Bool {
     return false
 }
 
+/// Stands in for Notification Center: `authorized` is what JT chose, `posted` what would be shown.
+/// `prompt` holds the authorization request like the system prompt waiting for a click.
+final class NotifierStub: ApprovalNotifying {
+    var onAction: ((_ approvalID: String, _ approve: Bool) async -> Void)?
+    var authorized: Bool
+    private(set) var posted: [String] = []
+    private let prompt: FirstCallGate?
+
+    init(authorized: Bool = false, prompt: FirstCallGate? = nil) {
+        self.authorized = authorized
+        self.prompt = prompt
+    }
+
+    func install() {}
+    func requestAuthorization() async -> Bool {
+        await prompt?.pass()
+        return authorized
+    }
+    func isAuthorized() async -> Bool { authorized }
+    func post(_ approval: Approval, context: ApprovalContext?) async { posted.append(approval.id) }
+    func withdraw(_ approvalIDs: [String]) {}
+}
+
 /// Counts Touch ID prompts and answers with a fixed result.
 actor PresenceProbe {
     private(set) var prompts = 0
@@ -257,7 +280,7 @@ private func routedClient(
 
     private func model(
         present: Bool, touchID: FirstCallGate? = nil, postGate: FirstCallGate? = nil,
-        journal: (@Sendable (_ afterSeq: Int) -> String)? = nil
+        journal: (@Sendable (_ afterSeq: Int) -> String)? = nil, notifier: NotifierStub? = nil
     ) -> ControlModel {
         let probe = probe
         return ControlModel(
@@ -267,7 +290,7 @@ private func routedClient(
                 await touchID?.pass()
                 return present
             },
-            notifier: nil, socket: nil)
+            notifier: notifier, socket: nil)
     }
 
     private func posts() async -> [String] {
@@ -314,6 +337,37 @@ private func routedClient(
         await model.refreshApprovals()
         #expect(await recorder.requests.filter { $0.url?.path() == "/api/journal" }.count == 20)
         #expect(model.contexts[id]?.rule == nil)
+    }
+
+    @Test func pollingStartsWhileTheNotificationPromptIsStillOpen() async {
+        let prompt = FirstCallGate()
+        let model = model(present: true, notifier: NotifierStub(prompt: prompt))
+        model.start()
+        #expect(await eventually { await recorder.requests.contains { $0.url?.path() == "/api/approvals/pending" } })
+        await prompt.open()
+        model.stop()
+    }
+
+    @Test func grantingNotificationsLaterPostsTheOpenApprovals() async {
+        let notifier = NotifierStub(authorized: false)
+        let model = model(present: true, notifier: notifier)
+        await model.refreshApprovals()
+        await model.refreshStatus()
+        #expect(model.notificationsAuthorized == false)
+        let before = notifier.posted.count
+        notifier.authorized = true  // JT allows notifications in System Settings
+        await model.refreshStatus()
+        #expect(Array(notifier.posted.dropFirst(before)) == [id, "b7c8d9e0-1f2a-4b3c-8d4e-5f6a7b8c9d0e"])
+    }
+
+    @Test func authorizedNotificationsPostEachNewApprovalOnce() async {
+        let notifier = NotifierStub(authorized: true)
+        let model = model(present: true, notifier: notifier)
+        await model.refreshStatus()
+        await model.refreshApprovals()
+        await model.refreshApprovals()
+        await model.refreshStatus()
+        #expect(notifier.posted == [id, "b7c8d9e0-1f2a-4b3c-8d4e-5f6a7b8c9d0e"])
     }
 
     @Test func refusedTouchIDSendsNothing() async {
