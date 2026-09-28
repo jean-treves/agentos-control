@@ -10,6 +10,8 @@ nonisolated struct AppSettings: Sendable {
     let readOnly: Bool
     /// Hosting the unit tests: start no poll, no socket, no notification.
     let isUnderTest: Bool
+    /// false: start in the menu bar only (spec §16.2).
+    let showWindowAtLaunch: Bool
 
     static let defaultHostURL = URL(string: "http://127.0.0.1:3107")!
 
@@ -19,14 +21,20 @@ nonisolated struct AppSettings: Sendable {
         AppSettings(
             hostURL: defaults.string(forKey: "hostURL").flatMap(URL.init(string:)) ?? defaultHostURL,
             readOnly: defaults.bool(forKey: "readOnly"),
-            isUnderTest: environment["XCTestConfigurationFilePath"] != nil)
+            isUnderTest: environment["XCTestConfigurationFilePath"] != nil,
+            showWindowAtLaunch: defaults.object(forKey: "showWindowAtLaunch") as? Bool ?? true)
+    }
+
+    /// JT's Obsidian vault: memory hits under it open in Obsidian.
+    static func vaultPath(defaults: UserDefaults = .standard) -> String {
+        defaults.string(forKey: "vaultPath") ?? NSHomeDirectory() + "/Obsidian/JT-Vault"
     }
 }
 
 /// Open at login (SMAppService works ad hoc, without approval: macos-app-facts.md). Only offered
 /// from the installed copy, otherwise the login item would point at a build folder.
 enum LoginItem {
-    static let installedPath = "/Applications/AgentOS Control.app"
+    static let installedPath = "/Applications/AgentOS.app"
 
     static var isAvailable: Bool { Bundle.main.bundleURL.path == installedPath }
     static var isEnabled: Bool { SMAppService.mainApp.status == .enabled }

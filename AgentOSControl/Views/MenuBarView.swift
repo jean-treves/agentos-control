@@ -4,7 +4,6 @@ import SwiftUI
 struct MenuBarView: View {
     @Environment(ControlModel.self) private var model
     @Environment(\.openWindow) private var openWindow
-    @State private var opensAtLogin = LoginItem.isEnabled
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -29,15 +28,13 @@ struct MenuBarView: View {
             Button(model.killSwitchOn ? "Désactiver l'arrêt d'urgence (Touch ID)" : "Arrêt d'urgence (Touch ID)") {
                 Task { await model.setKillSwitch(!model.killSwitchOn) }
             }
-            Toggle("Ouvrir à la connexion", isOn: $opensAtLogin)
-                .disabled(!LoginItem.isAvailable)
-                .help(LoginItem.isAvailable ? "" : "Seulement depuis \(LoginItem.installedPath)")
-                .onChange(of: opensAtLogin) { _, enabled in setLoginItem(enabled) }
             HStack {
-                Button("Ouvrir la fenêtre") {
+                Button("Ouvrir AgentOS") {
+                    NSApp.setActivationPolicy(.regular)
                     openWindow(id: "main")
                     NSApplication.shared.activate()
                 }
+                SettingsLink { Text("Réglages…") }
                 Spacer()
                 Button("Quitter") { NSApplication.shared.terminate(nil) }
             }
@@ -62,12 +59,5 @@ struct MenuBarView: View {
     private func openNotificationSettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.jeantreves.agentoscontrol")!
         NSWorkspace.shared.open(url)
-    }
-
-    private func setLoginItem(_ enabled: Bool) {
-        do { try LoginItem.set(enabled) } catch {
-            model.lastError = "Ouverture à la connexion : \(error.localizedDescription)"
-        }
-        opensAtLogin = LoginItem.isEnabled
     }
 }

@@ -29,8 +29,8 @@ human where they are, and the approve path must prove a human is actually there.
 ```bash
 xcodegen generate
 xcodebuild test -project AgentOSControl.xcodeproj -scheme AgentOSControl -destination 'platform=macOS' -derivedDataPath build
-Scripts/build_app.sh     # Release, ad hoc signature, /Applications/AgentOS Control.app
-open "/Applications/AgentOS Control.app" --args -readOnly YES   # optional: observe only, never acts
+Scripts/build_app.sh     # Release, ad hoc signature, /Applications/AgentOS.app (archives the former AgentOS Control.app)
+open "/Applications/AgentOS.app" --args -readOnly YES   # optional: observe only, never acts
 ```
 
 Requirements: macOS 26+, Xcode 26+, XcodeGen. No third-party dependency; ad hoc signing only.
