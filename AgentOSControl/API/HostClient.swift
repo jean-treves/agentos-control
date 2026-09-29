@@ -13,6 +13,8 @@ nonisolated enum HostError: Error, Equatable, Sendable, LocalizedError {
     case unauthorized
     case notFound
     case http(Int)
+    /// Any other non-2xx that carries FastAPI's `{"detail": "…"}`: the host's own reason (already redacted).
+    case host(Int, String)
     case decoding(String)
 
     var errorDescription: String? {
@@ -23,6 +25,7 @@ nonisolated enum HostError: Error, Equatable, Sendable, LocalizedError {
         case .unauthorized: "Jeton de contrôle refusé par le host (401)."
         case .notFound: "Introuvable (404)."
         case .http(let status): "Erreur HTTP \(status)."
+        case .host(let status, let detail): "\(detail) (HTTP \(status))."
         case .decoding(let detail): "Réponse illisible (\(detail))."
         }
     }
@@ -234,8 +237,17 @@ actor HostClient {
         case 401: throw .unauthorized
         case 404: throw .notFound
         case 503: throw .controlDisabled
-        default: throw .http(status)
+        default:
+            if let detail = Self.hostDetail(in: data) { throw .host(status, detail) }
+            throw .http(status)
         }
+    }
+
+    /// FastAPI's `{"detail": "…"}`; a list (422), an HTML page or an empty text is not a reason.
+    private static func hostDetail(in data: Data) -> String? {
+        guard let envelope = try? JSONDecoder().decode(DetailEnvelope.self, from: data) else { return nil }
+        let detail = envelope.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        return detail.isEmpty ? nil : detail
     }
 
     private func decode<T: Decodable>(_ type: T.Type, _ data: Data) throws(HostError) -> T {
@@ -246,6 +258,7 @@ actor HostClient {
 }
 
 // Response envelopes of host.py (`{"pending": [...]}` etc.).
+nonisolated private struct DetailEnvelope: Decodable { let detail: String }
 nonisolated private struct OkEnvelope: Decodable { let ok: Bool }
 nonisolated private struct KillSwitchEnvelope: Decodable { let killswitch: Bool }
 nonisolated private struct PendingEnvelope: Decodable { let pending: [Approval] }

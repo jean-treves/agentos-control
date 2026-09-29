@@ -320,6 +320,22 @@ func makeClient(
         await #expect(throws: expected) { try await client.setKillSwitch(false) }
     }
 
+    /// The host explains its failures (`{"detail": "ai-memory : connection refused"}`): JT reads that,
+    /// not a bare status.
+    @Test func aFailureCarriesTheHostsOwnReason() async {
+        let client = makeClient(status: 502, body: #"{"detail":"ai-memory : connection refused"}"#, recorder: recorder)
+        let error = await #expect(throws: HostError.self) { _ = try await client.pendingApprovals() }
+        #expect(error == .host(502, "ai-memory : connection refused"))
+        #expect(error?.localizedDescription == "ai-memory : connection refused (HTTP 502).")
+    }
+
+    /// FastAPI's 422 carries a list, a proxy an HTML page, a bare 500 nothing: all stay a plain status.
+    @Test(arguments: [#"{"detail":[{"loc":["query","q"],"msg":"field required"}]}"#, "{}", "<html>", #"{"detail":"  "}"#])
+    func withoutAStringDetailItStaysAPlainHTTPError(body: String) async {
+        let client = makeClient(status: 500, body: body, recorder: recorder)
+        await #expect(throws: HostError.http(500)) { _ = try await client.pendingApprovals() }
+    }
+
     @Test func mapsTransportFailureAndBadJSON() async throws {
         let down = HostClient(
             baseURL: URL(string: "http://127.0.0.1:3107")!, token: { nil },

@@ -11,7 +11,12 @@ struct SettingsView: View {
             Toggle("Ouvrir à la connexion", isOn: $opensAtLogin)
                 .disabled(!LoginItem.isAvailable)
                 .help(LoginItem.isAvailable ? "" : "Seulement depuis \(LoginItem.installedPath)")
-                .onChange(of: opensAtLogin) { _, enabled in setLoginItem(enabled) }
+                .onChange(of: opensAtLogin) { _, enabled in
+                    // A failed register() flips the toggle back: that echo must not call unregister(),
+                    // whose error would replace the real one.
+                    guard enabled != LoginItem.isEnabled else { return }
+                    setLoginItem(enabled)
+                }
             Toggle("Afficher la fenêtre au lancement", isOn: $showWindowAtLaunch)
             Text("Sur non, AgentOS démarre dans la barre des menus seulement (effet au prochain lancement).")
                 .font(.caption).foregroundStyle(.secondary)
@@ -22,7 +27,7 @@ struct SettingsView: View {
     }
 
     private func setLoginItem(_ enabled: Bool) {
-        do { try LoginItem.set(enabled) } catch {
+        do { try LoginItem.set(enabled); error = nil } catch {
             self.error = "Ouverture à la connexion : \(error.localizedDescription)"
         }
         opensAtLogin = LoginItem.isEnabled

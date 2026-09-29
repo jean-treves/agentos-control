@@ -36,7 +36,7 @@ struct JobsView: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .help(offer.url ?? "Pas de lien")
+                    .help(JobsSummary.openableURL(offer.url)?.host() ?? "Pas de lien")
                 }
             }
         }
@@ -117,11 +117,12 @@ enum JobsSummary {
     }
 
     /// Offer links are scraped: only `http(s)` is ever opened. job-room links often come as
-    /// `www.jobs.ch/…` (no scheme), which gets `https://`.
+    /// `www.jobs.ch/…` (no scheme), which gets `https://`. Userinfo is refused: in
+    /// `https://www.x.com@evil.com/p` the text reads x.com and the browser opens evil.com.
     static func openableURL(_ raw: String?) -> URL? {
         guard var text = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         if text.lowercased().hasPrefix("www.") { text = "https://" + text }
-        guard let url = URL(string: text), url.host() != nil,
+        guard let url = URL(string: text), url.host() != nil, url.user() == nil, url.password() == nil,
               let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http"
         else { return nil }
         return url

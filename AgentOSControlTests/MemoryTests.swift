@@ -78,14 +78,14 @@ import Testing
         let results = await MemoryResults.search("hermes", client: client(vaultStatus: 200, sessionsStatus: 502))
         #expect(results.vault.map(\.path) == ["/v/a.md"])
         #expect(results.sessions.isEmpty)
-        #expect(results.error == "Sessions : Erreur HTTP 502.")
+        #expect(results.error == "Sessions : down (HTTP 502).")
     }
 
     @Test func aDownVaultIndexKeepsTheSessionHits() async {
         let results = await MemoryResults.search("hermes", client: client(vaultStatus: 500, sessionsStatus: 200))
         #expect(results.vault.isEmpty)
         #expect(results.sessions.map(\.path) == ["sessions/a.md"])
-        #expect(results.error == "Vault : Erreur HTTP 500.")
+        #expect(results.error == "Vault : down (HTTP 500).")
     }
 }
 

@@ -77,7 +77,8 @@ private struct FindingRow: View {
             }
             if let command = finding.command, !command.isEmpty {
                 HStack {
-                    Text(command).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
+                    // Wrapped in full, never truncated: JT reads the whole command before copying it.
+                    Text(command).font(.caption.monospaced()).fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                     Button(copied ? "Copié" : "Copier") {
                         StorageSummary.copy(command)

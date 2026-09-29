@@ -81,6 +81,16 @@ private let appsBody = #"{"total":1,"funnel":{"identified":1},"due":[{"id":"a"}]
             #expect(JobsSummary.openableURL(raw) == nil, "\(raw ?? "nil")")
         }
     }
+
+    /// `https://www.x.com@evil.com/p` reads as x.com and opens evil.com: userinfo is refused, also
+    /// after the scheme-less `www.` upgrade.
+    @Test func aLinkWithUserinfoIsNeverOpened() {
+        for raw in ["https://www.x.com@evil.com/p", "www.x.com@evil.com/p", "http://user:pw@example.invalid/o",
+                    "https://@example.invalid/o"] {
+            #expect(JobsSummary.openableURL(raw) == nil, "\(raw)")
+        }
+        #expect(JobsSummary.openableURL("https://www.x.com/p?u=a@b.c")?.host() == "www.x.com")
+    }
 }
 
 @Suite struct StorageRefreshTests {

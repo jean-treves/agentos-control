@@ -2,16 +2,27 @@ import AppKit
 
 /// Keeps AgentOS alive with its window closed, brings the window back when JT reopens the app
 /// from the Dock, the Launchpad, Spotlight or the Finder (spec §16.2), and owns the one rule for
-/// the Dock icon: present while a titled window (main or Settings) is on screen, gone otherwise.
+/// the Dock icon: present while a main-capable window (main or Settings) is on screen, gone otherwise.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Registered by the menu bar label, the one view alive for the whole session (decision E3).
     var openMainWindow: (() -> Void)?
+    /// The windows to count; a seam so tests do not depend on what other suites have on screen.
+    var windows: () -> [NSWindow] = { NSApp.windows }
     private var observers: [any NSObjectProtocol] = []
 
     /// Pure so it can be tested: the Dock icon and ⌘-Tab follow the windows.
-    static func policy(visibleTitledWindows: Int) -> NSApplication.ActivationPolicy {
-        visibleTitledWindows > 0 ? .regular : .accessory
+    static func policy(mainWindows: Int) -> NSApplication.ActivationPolicy {
+        mainWindows > 0 ? .regular : .accessory
     }
+
+    /// A window that deserves a Dock icon: titled, not a panel (the MenuBarExtra popup may be a
+    /// titled one), on screen or minimized (a minimized window still sits in the Dock).
+    static func isMainCapable(_ window: NSWindow) -> Bool {
+        window.styleMask.contains(.titled) && !(window is NSPanel) && (window.isVisible || window.isMiniaturized)
+    }
+
+    /// The one count behind both the Dock icon and the reopen decision.
+    func mainWindowCount() -> Int { windows().filter(Self.isMainCapable).count }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Menu-bar-only start: no Dock icon until a window shows (refreshActivationPolicy).
@@ -31,13 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ]
     }
 
-    /// Counts titled windows only: the MenuBarExtra panel is borderless and must not keep the Dock
-    /// icon alive. A minimized window still sits in the Dock, so it counts.
     func refreshActivationPolicy() {
-        let count = NSApp.windows.filter {
-            $0.styleMask.contains(.titled) && ($0.isVisible || $0.isMiniaturized)
-        }.count
-        let policy = Self.policy(visibleTitledWindows: count)
+        let policy = Self.policy(mainWindows: mainWindowCount())
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     }
 
@@ -50,8 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { showMainWindow() }
+    /// AppKit's flag is not trusted: a status item can make it true with no window of ours on
+    /// screen. The count of main-capable windows decides.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        if mainWindowCount() == 0 { showMainWindow() }
         return true
     }
 }
