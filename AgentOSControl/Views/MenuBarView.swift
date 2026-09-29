@@ -3,7 +3,8 @@ import SwiftUI
 
 struct MenuBarView: View {
     @Environment(ControlModel.self) private var model
-    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
+    let delegate: AppDelegate
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -29,12 +30,14 @@ struct MenuBarView: View {
                 Task { await model.setKillSwitch(!model.killSwitchOn) }
             }
             HStack {
-                Button("Ouvrir AgentOS") {
+                Button("Ouvrir AgentOS") { delegate.showMainWindow() }
+                // Not SettingsLink: an accessory app must become regular and active first, or the
+                // Settings window opens behind the other windows.
+                Button("Réglages…") {
                     NSApp.setActivationPolicy(.regular)
-                    openWindow(id: "main")
+                    openSettings()
                     NSApplication.shared.activate()
                 }
-                SettingsLink { Text("Réglages…") }
                 Spacer()
                 Button("Quitter") { NSApplication.shared.terminate(nil) }
             }

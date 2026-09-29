@@ -22,7 +22,9 @@ nonisolated struct AppSettings: Sendable {
             hostURL: defaults.string(forKey: "hostURL").flatMap(URL.init(string:)) ?? defaultHostURL,
             readOnly: defaults.bool(forKey: "readOnly"),
             isUnderTest: environment["XCTestConfigurationFilePath"] != nil,
-            showWindowAtLaunch: defaults.object(forKey: "showWindowAtLaunch") as? Bool ?? true)
+            // bool(forKey:) also reads the strings "YES"/"NO" that `-key NO` and `defaults write` produce.
+            showWindowAtLaunch: defaults.object(forKey: "showWindowAtLaunch") == nil
+                ? true : defaults.bool(forKey: "showWindowAtLaunch"))
     }
 
     /// JT's Obsidian vault: memory hits under it open in Obsidian.

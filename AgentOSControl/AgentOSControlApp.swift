@@ -18,17 +18,15 @@ struct AgentOSControlApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarView().environment(model)
+            MenuBarView(delegate: delegate).environment(model)
         } label: {
             MenuBarLabel(model: model, delegate: delegate)
         }
         .menuBarExtraStyle(.window)
 
         Window("AgentOS", id: "main") {
+            // Dock icon and Cmd-Tab follow the windows: AppDelegate.refreshActivationPolicy (spec §16.2).
             MainView().environment(model)
-                // A window on screen: Dock icon and Cmd-Tab; closed: menu bar only (spec §16.2).
-                .onAppear { NSApp.setActivationPolicy(.regular) }
-                .onDisappear { NSApp.setActivationPolicy(.accessory) }
         }
         .defaultSize(width: 1040, height: 660)
         .defaultLaunchBehavior(settings.showWindowAtLaunch && !settings.isUnderTest ? .presented : .suppressed)
