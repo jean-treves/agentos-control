@@ -215,3 +215,70 @@ nonisolated struct MemoryPage: Decodable, Sendable, Hashable, Identifiable {
     let body: String
     var id: String { path }
 }
+
+/// `GET /api/status`: only the disk is read here (the rest feeds the web cockpit).
+nonisolated struct StatusPayload: Decodable, Sendable {
+    let disk: DiskStatus?
+}
+
+nonisolated struct DiskStatus: Decodable, Sendable, Hashable {
+    let freeGb: Double
+    let totalGb: Double
+    let usedPct: Int
+}
+
+/// `GET /api/optimize/latest` (documents/optimize-*.json written by the /optimize scan).
+nonisolated struct OptimizeReport: Decodable, Sendable, Hashable {
+    let generatedAt: String?
+    let findings: [Finding]
+}
+
+nonisolated struct Finding: Decodable, Sendable, Hashable, Identifiable {
+    let id: String
+    let category: String
+    let title: String
+    let description: String?
+    let command: String?
+    let riskLevel: String?
+    let oneClickSafe: Bool?
+    let estimatedImpactMb: Double?
+}
+
+/// One job-radar offer. Text and `url` are scraped: the app only displays them and opens `http(s)` links.
+nonisolated struct JobOffer: Decodable, Sendable, Hashable, Identifiable {
+    let title: String
+    let company: String
+    let url: String?
+    let stars: Int?
+    let why: String?
+    let location: String?
+    let country: String?
+    let posted: String?
+    let source: String?
+    var id: String { url ?? "\(company)|\(title)" }
+}
+
+/// `GET /api/jobsearch/merged`. The host's `errors` field is not decoded on purpose: it holds the
+/// upstream error text, which includes the failing request URL (with its API credentials).
+nonisolated struct MergedOffers: Decodable, Sendable {
+    let offers: [JobOffer]
+    let reportDate: String?
+}
+
+/// `GET /api/jobsearch/applications`.
+nonisolated struct Applications: Decodable, Sendable {
+    let total: Int?
+    let funnel: [String: Int]?
+    let due: [IgnoredItem]?
+}
+
+/// An array element whose content the app does not show (only the count matters).
+nonisolated struct IgnoredItem: Decodable, Sendable, Hashable {
+    init(from decoder: any Decoder) throws {}
+}
+
+/// `POST /api/optimize/run` and `POST /api/jobsearch/run`.
+nonisolated struct LaunchReply: Decodable, Sendable, Hashable {
+    let started: Bool
+    let reason: String?
+}

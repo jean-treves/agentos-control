@@ -120,6 +120,22 @@ actor HostClient {
                       query: ["path": path, "workspace": workspace, "project": project])
     }
 
+    func status() async throws(HostError) -> StatusPayload { try await get(StatusPayload.self, "/api/status") }
+
+    /// 404 until the first /optimize scan has run.
+    func optimizeLatest() async throws(HostError) -> OptimizeReport {
+        try await get(OptimizeReport.self, "/api/optimize/latest")
+    }
+
+    /// 404 until job-radar has produced a report.
+    func mergedOffers() async throws(HostError) -> MergedOffers {
+        try await get(MergedOffers.self, "/api/jobsearch/merged")
+    }
+
+    func applications() async throws(HostError) -> Applications {
+        try await get(Applications.self, "/api/jobsearch/applications")
+    }
+
     // MARK: Control (Bearer)
 
     func decide(approvalID: String, approve: Bool) async throws(HostError) {
@@ -146,6 +162,16 @@ actor HostClient {
     /// Returns the task's new status (`cancelled`, `paused` or `queued`).
     func taskAction(id: String, action: TaskAction) async throws(HostError) -> String {
         try decode(TaskStatusEnvelope.self, try await send("/api/tasks/\(id)/\(action.rawValue)")).status
+    }
+
+    /// Starts the /optimize scan in the background (`started: false` when one already runs).
+    func startScan() async throws(HostError) -> LaunchReply {
+        try decode(LaunchReply.self, try await send("/api/optimize/run"))
+    }
+
+    /// Starts a job-radar run in the background.
+    func runJobRadar() async throws(HostError) -> LaunchReply {
+        try decode(LaunchReply.self, try await send("/api/jobsearch/run"))
     }
 
     // MARK: Plumbing

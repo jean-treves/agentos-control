@@ -189,6 +189,38 @@ final class ControlModel {
         }
     }
 
+    /// Touch ID, then the /optimize scan in the background; the sentence shown to JT.
+    func startScan() async -> String {
+        await launch("lancer l'analyse du stockage", label: "Analyse") { () async throws(HostError) in
+            try await self.client.startScan()
+        }
+    }
+
+    /// Touch ID, then a job-radar run in the background.
+    func runJobRadar() async -> String {
+        await launch("lancer job-radar", label: "job-radar") { () async throws(HostError) in
+            try await self.client.runJobRadar()
+        }
+    }
+
+    private func launch(
+        _ reason: String, label: String, _ call: () async throws(HostError) -> LaunchReply
+    ) async -> String {
+        guard await presence.verify(reason) else { return "Annulé" }
+        do {
+            let reply = try await call()
+            lastError = nil
+            return Self.describe(reply, label: label)
+        } catch {
+            report(error)
+            return error.localizedDescription
+        }
+    }
+
+    static func describe(_ reply: LaunchReply, label: String) -> String {
+        reply.started ? "\(label) lancée" : "\(label) non lancée : \(reply.reason ?? "raison inconnue")"
+    }
+
     // MARK: Plumbing
 
     private var openIDs: Set<String> { Set(book.open.map(\.id)) }

@@ -121,6 +121,51 @@ func makeClient(
         ])
     }
 
+    @Test func storageAndJobsDecodeTheirLiveShapes() async throws {
+        let disk = try await makeClient(body: #"{"disk":{"free_gb":77.7,"total_gb":460.4,"used_pct":83},"load":[1,2,3]}"#,
+                                        recorder: recorder).status().disk
+        #expect(disk?.usedPct == 83)
+        let report = try await makeClient(body: #"{"generated_at":"2026-09-11T17:41:22+00:00","findings":[{"id":"f1","category":"disk","title":"~/Downloads occupies 2.4 GB","description":"d","command":null,"risk_level":"low","one_click_safe":false,"estimated_impact_mb":null}]}"#,
+                                          recorder: recorder).optimizeLatest()
+        #expect(report.findings.first?.estimatedImpactMb == nil && report.findings.first?.command == nil)
+        let merged = try await makeClient(body: #"{"offers":[{"stars":2,"title":"Quant","company":"C","url":"https://example.invalid/o","why":"w","location":"Genève","country":"CH","posted":"2026-09-27","source":"pme","family":"quant","is_agency":false}],"offers_count":1,"report_date":"2026-09-28","producers":{"pme":1}}"#,
+                                          recorder: recorder).mergedOffers()
+        #expect(merged.offers.first?.stars == 2 && merged.reportDate == "2026-09-28")
+        let apps = try await makeClient(body: #"{"total":0,"funnel":{"identified":0},"due":[],"schema_version":1}"#,
+                                        recorder: recorder).applications()
+        #expect(apps.total == 0 && apps.due?.isEmpty == true)
+        let paths = await recorder.requests.map { $0.url?.path() ?? "" }
+        #expect(paths == ["/api/status", "/api/optimize/latest", "/api/jobsearch/merged", "/api/jobsearch/applications"])
+    }
+
+    /// Ignored elements must still count: `due` is only shown as a number.
+    @Test func dueFollowUpsAreCountedWhateverTheirContent() async throws {
+        let apps = try await makeClient(body: #"{"total":3,"funnel":{},"due":[{"company":"A"},{"x":1},"odd"]}"#,
+                                        recorder: recorder).applications()
+        #expect(apps.due?.count == 3)
+    }
+
+    @Test func launchRoutesArePostsWithTheBearerAndReadTheirReply() async throws {
+        let started = try await makeClient(body: #"{"started":true,"pid":4242}"#, recorder: recorder).startScan()
+        #expect(started == LaunchReply(started: true, reason: nil))
+        let refused = try await makeClient(body: #"{"started":false,"reason":"scan already running"}"#, recorder: recorder)
+            .runJobRadar()
+        #expect(refused == LaunchReply(started: false, reason: "scan already running"))
+        let sent = await recorder.requests
+        #expect(sent.map { "\($0.httpMethod ?? "") \($0.url?.path() ?? "")" }
+                == ["POST /api/optimize/run", "POST /api/jobsearch/run"])
+        #expect(sent.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer test-token" })
+        // No token on this Mac: the launch is refused locally, unsent.
+        let recorder = recorder
+        let noToken = HostClient(baseURL: URL(string: "http://127.0.0.1:3107")!, token: { nil },
+                                 transport: { request in
+                                     await recorder.record(request)
+                                     throw URLError(.notConnectedToInternet)
+                                 })
+        await #expect(throws: HostError.tokenUnavailable) { try await noToken.startScan() }
+        #expect(await recorder.requests.count == 2)
+    }
+
     @Test func decodesPendingApprovalsWithNullableFields() async throws {
         let approvals = try await makeClient(body: Fixture.pending, recorder: recorder).pendingApprovals()
         #expect(approvals.count == 2)
