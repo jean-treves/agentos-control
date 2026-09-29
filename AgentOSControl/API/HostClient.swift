@@ -107,6 +107,19 @@ actor HostClient {
         try await get(BreakerStatus.self, "/api/breaker")
     }
 
+    func vaultSearch(_ query: String) async throws(HostError) -> [VaultHit] {
+        try await get(VaultEnvelope.self, "/api/memory/search", query: ["q": query, "k": "20"]).results
+    }
+
+    func memoryQuery(_ query: String) async throws(HostError) -> [MemoryHit] {
+        try await get(MemoryEnvelope.self, "/api/memory/query", query: ["q": query, "k": "20"]).results
+    }
+
+    func memoryPage(path: String, workspace: String, project: String) async throws(HostError) -> MemoryPage {
+        try await get(MemoryPage.self, "/api/memory/page",
+                      query: ["path": path, "workspace": workspace, "project": project])
+    }
+
     // MARK: Control (Bearer)
 
     func decide(approvalID: String, approve: Bool) async throws(HostError) {
@@ -208,3 +221,5 @@ nonisolated private struct JournalEnvelope: Decodable { let events: [JournalEven
 nonisolated private struct TasksEnvelope: Decodable { let tasks: [AgentTask] }
 nonisolated private struct TaskIDEnvelope: Decodable { let taskId: String }
 nonisolated private struct TaskStatusEnvelope: Decodable { let status: String }
+nonisolated private struct VaultEnvelope: Decodable { let results: [VaultHit] }
+nonisolated private struct MemoryEnvelope: Decodable { let results: [MemoryHit] }

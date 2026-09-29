@@ -5,7 +5,7 @@ import Testing
 
 @Suite struct SidebarTests {
     @Test func sectionsInTheOrderOfSpec16() {
-        #expect(SidebarItem.allCases.map(\.title) == ["Aperçu", "Approbations", "Runs", "Tâches"])
+        #expect(SidebarItem.allCases.map(\.title) == ["Aperçu", "Approbations", "Runs", "Tâches", "Mémoire"])
         #expect(Set(SidebarItem.allCases.map(\.symbol)).count == SidebarItem.allCases.count)
     }
 
@@ -23,7 +23,10 @@ import Testing
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: MainView().environment(model))
         window.orderFront(nil)
-        defer { window.close() }
+        defer {
+            window.close()
+            window.contentView = nil
+        }
 
         var table: NSTableView?
         for _ in 0..<50 where table?.selectedRow != 0 {

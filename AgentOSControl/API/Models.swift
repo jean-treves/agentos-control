@@ -187,3 +187,31 @@ nonisolated struct HealthCheck: Decodable, Sendable, Hashable, Identifiable {
 nonisolated func parseTimestamp(_ text: String) -> Date? {
     try? Date.ISO8601FormatStyle().parse(text)
 }
+
+/// One `/api/memory/search` result: the vault index (SP4). Text is already redacted by the host.
+nonisolated struct VaultHit: Decodable, Sendable, Hashable, Identifiable {
+    let source: String
+    let path: String
+    let snippet: String?
+    let score: Double?
+    var id: String { path }
+}
+
+/// One `/api/memory/query` result: an ai-memory session or handoff page.
+nonisolated struct MemoryHit: Decodable, Sendable, Hashable, Identifiable {
+    let path: String
+    let title: String
+    let snippet: String?
+    let project: String?
+    let workspace: String?
+    let rank: Double?
+    var id: String { "\(workspace ?? "")/\(project ?? "")/\(path)" }
+}
+
+/// `GET /api/memory/page`.
+nonisolated struct MemoryPage: Decodable, Sendable, Hashable, Identifiable {
+    let path: String
+    let title: String
+    let body: String
+    var id: String { path }
+}

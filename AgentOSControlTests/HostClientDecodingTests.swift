@@ -89,6 +89,26 @@ func makeClient(
 @Suite struct HostClientDecodingTests {
     let recorder = RequestRecorder()
 
+    @Test func memorySearchesHitTheirRoutes() async throws {
+        let vault = try await makeClient(body: #"{"query":"q","results":[{"source":"vault","path":"/v/a.md","snippet":"s","score":0.9,"method":"fts"}]}"#,
+                                         recorder: recorder).vaultSearch("hermes chat")
+        #expect(vault.first?.source == "vault")
+        let hits = try await makeClient(body: #"{"query":"q","results":[{"path":"sessions/a.md","title":"T","snippet":"S","project":"p","workspace":"w","rank":1.5}]}"#,
+                                        recorder: recorder).memoryQuery("hermes chat")
+        #expect(hits.first?.workspace == "w" && hits.first?.rank == 1.5)
+        let paths = await recorder.requests.map { "\($0.url?.path() ?? "")?\($0.url?.query() ?? "")" }
+        #expect(paths == ["/api/memory/search?k=20&q=hermes%20chat", "/api/memory/query?k=20&q=hermes%20chat"])
+    }
+
+    @Test func memoryPageSendsPathWorkspaceAndProject() async throws {
+        let page = try await makeClient(body: #"{"path":"sessions/a.md","title":"T","body":"corps"}"#, recorder: recorder)
+            .memoryPage(path: "sessions/a.md", workspace: "default", project: "PyCharmMiscProject")
+        #expect(page.title == "T" && page.body == "corps")
+        let url = await recorder.requests.first?.url
+        #expect(url?.path() == "/api/memory/page")
+        #expect(url?.query() == "path=sessions/a.md&project=PyCharmMiscProject&workspace=default")
+    }
+
     @Test func decodesPendingApprovalsWithNullableFields() async throws {
         let approvals = try await makeClient(body: Fixture.pending, recorder: recorder).pendingApprovals()
         #expect(approvals.count == 2)
