@@ -161,6 +161,9 @@ func makeClient(
             body: #"{"offers":47,"jobs_date":"2026-09-28","reclaim_gb":3.1,"scan_date":"2026-09-11","cpu_24h":[]}"#,
             recorder: recorder).glance()
         #expect(full.offers == 47 && full.jobsDate == "2026-09-28" && full.reclaimGb == 3.1)
+        let sent = await recorder.requests
+        #expect(sent.first?.url?.path() == "/api/glance")
+        #expect(sent.first?.value(forHTTPHeaderField: "Authorization") == nil)
         let empty = try await makeClient(body: "{}", recorder: recorder).glance()
         #expect(empty.offers == nil && empty.scanDate == nil)
     }

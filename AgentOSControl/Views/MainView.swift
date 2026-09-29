@@ -7,7 +7,9 @@ struct MainView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(SidebarItem.allCases, selection: selection) { item in
+            // id: \.self, not the Identifiable id: the rows must be tagged with the SidebarItem itself, or
+            // a click stores a String tag the SidebarItem? binding cannot take and nothing gets selected.
+            List(SidebarItem.allCases, id: \.self, selection: selection) { item in
                 Label(item.title, systemImage: item.symbol)
                     .badge(item == .approvals ? model.openApprovals.count : 0)
             }
