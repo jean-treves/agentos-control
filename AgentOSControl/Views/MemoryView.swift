@@ -4,30 +4,24 @@ import SwiftUI
 /// Mémoire (spec §16.3): one search over the vault index (SP4) and ai-memory's sessions and handoffs.
 struct MemoryView: View {
     @Environment(ControlModel.self) private var model
+    @State private var memory = MemoryModel()
     @State private var query = ""
-    @State private var vault: [VaultHit] = []
-    @State private var sessions: [MemoryHit] = []
-    @State private var error: String?
-    @State private var searched = false
-    @State private var page: MemoryPage?
-
-    private var isEmpty: Bool { vault.isEmpty && sessions.isEmpty }
 
     var body: some View {
         List {
             // One source down must not hide the other's hits, nor stay silent about it.
-            if let error, !isEmpty { Text(error).font(.caption).foregroundStyle(.red) }
-            Section("Vault et documents (\(vault.count))") {
-                ForEach(vault) { hit in
+            if let message = memory.message, !memory.isEmpty { Text(message).font(.caption).foregroundStyle(.red) }
+            Section("Vault et documents (\(memory.vault.count))") {
+                ForEach(memory.vault) { hit in
                     Button { open(hit) } label: {
                         row(MemoryText.fileName(hit.path), MemoryText.plain(hit.snippet ?? ""), hit.source)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            Section("Sessions et passations (\(sessions.count))") {
-                ForEach(sessions) { hit in
-                    Button { Task { await show(hit) } } label: {
+            Section("Sessions et passations (\(memory.sessions.count))") {
+                ForEach(memory.sessions) { hit in
+                    Button { memory.show(hit, client: model.client) } label: {
                         row(hit.title, MemoryText.plain(hit.snippet ?? ""), hit.project ?? "")
                     }
                     .buttonStyle(.plain)
@@ -35,14 +29,15 @@ struct MemoryView: View {
             }
         }
         .searchable(text: $query, prompt: "Chercher dans la mémoire")
-        .onSubmit(of: .search) { Task { await search() } }
+        .onSubmit(of: .search) { memory.search(query, client: model.client) }
         .overlay {
-            if isEmpty {
+            if memory.isEmpty {
                 ContentUnavailableView(
-                    error ?? (searched ? "Aucun résultat" : "Tape une recherche, puis Entrée"), systemImage: "brain")
+                    memory.message ?? (memory.searched ? "Aucun résultat" : "Tape une recherche, puis Entrée"),
+                    systemImage: "brain")
             }
         }
-        .sheet(item: $page) { page in PageSheet(page: page) }
+        .sheet(item: $memory.page) { page in PageSheet(page: page) }
     }
 
     private func row(_ title: String, _ detail: String, _ caption: String) -> some View {
@@ -53,28 +48,67 @@ struct MemoryView: View {
         }
     }
 
-    private func search() async {
+    /// A vault note opens in Obsidian; anything else is only revealed in Finder, never opened: a host-supplied
+    /// path could be an app or a script (the app executes nothing, spec §16.5).
+    private func open(_ hit: VaultHit) {
+        switch MemoryText.openAction(hit.path, vault: AppSettings.vaultPath()) {
+        case .obsidian(let url): NSWorkspace.shared.open(url)
+        case .reveal(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+}
+
+/// State of the Memory screen. A new search or click cancels the previous one, and a cancelled one never
+/// writes: the latest request wins whatever order the answers arrive in.
+@Observable final class MemoryModel {
+    private(set) var vault: [VaultHit] = []
+    private(set) var sessions: [MemoryHit] = []
+    private(set) var searched = false
+    var page: MemoryPage?
+    private var searchError: String?
+    private var pageError: String?
+    @ObservationIgnored private(set) var searchTask: Task<Void, Never>?
+    @ObservationIgnored private(set) var pageTask: Task<Void, Never>?
+
+    var isEmpty: Bool { vault.isEmpty && sessions.isEmpty }
+
+    /// The search failures and the page failure, one per line.
+    var message: String? {
+        let lines = [searchError, pageError].compactMap { $0 }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    func search(_ query: String, client: HostClient) {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.count >= 2 else { return }
-        let results = await MemoryResults.search(text, client: model.client)
-        vault = results.vault
-        sessions = results.sessions
-        error = results.error
-        searched = true
+        searchTask?.cancel()
+        searchTask = Task {
+            let results = await MemoryResults.search(text, client: client)
+            guard !Task.isCancelled else { return }  // a cancelled request's error is not a failure
+            vault = results.vault
+            sessions = results.sessions
+            searchError = results.error
+            pageError = nil
+            searched = true
+        }
     }
 
-    private func open(_ hit: VaultHit) {
-        let url = MemoryText.obsidianURL(hit.path, vault: AppSettings.vaultPath()) ?? URL(fileURLWithPath: hit.path)
-        NSWorkspace.shared.open(url)
-    }
-
-    private func show(_ hit: MemoryHit) async {
+    func show(_ hit: MemoryHit, client: HostClient) {
         guard let workspace = hit.workspace, let project = hit.project else {
-            error = "Page : espace ou projet manquant dans le résultat."
+            pageError = "Page : espace ou projet manquant dans le résultat."
             return
         }
-        do { page = try await model.client.memoryPage(path: hit.path, workspace: workspace, project: project) } catch {
-            self.error = "Page : \(error.localizedDescription)"
+        pageTask?.cancel()
+        pageTask = Task {
+            do {
+                let loaded = try await client.memoryPage(path: hit.path, workspace: workspace, project: project)
+                guard !Task.isCancelled else { return }
+                page = loaded
+                pageError = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                pageError = "Page : \(error.localizedDescription)"
+            }
         }
     }
 }
@@ -124,18 +158,43 @@ enum MemoryText {
         URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
     }
 
-    /// Vault notes open in Obsidian; any other file opens in its default app.
+    /// What a click on a vault-index hit does.
+    enum OpenAction: Equatable {
+        case obsidian(URL)
+        case reveal(URL)
+    }
+
+    static func openAction(_ path: String, vault: String) -> OpenAction {
+        if let url = obsidianURL(path, vault: vault) { return .obsidian(url) }
+        return .reveal(URL(fileURLWithPath: path))
+    }
+
+    /// Absolute `path` without `.`, `..` and empty components. Not `standardizedFileURL`: it rewrites
+    /// accents to their decomposed form, and Obsidian looks notes up by their exact name.
+    private static func resolved(_ path: String) -> String {
+        var parts: [Substring] = []
+        for part in path.split(separator: "/") {
+            if part == ".." { _ = parts.popLast() } else if part != "." { parts.append(part) }
+        }
+        return "/" + parts.joined(separator: "/")
+    }
+
+    /// `obsidian://` link of a `.md` note that really lies under `vault`; nil for anything else. `..` is
+    /// resolved before the test, so a path cannot climb out of the vault; a vault that is not an absolute
+    /// path (empty, relative, `/`) matches nothing.
     static func obsidianURL(_ path: String, vault: String) -> URL? {
-        guard path.hasPrefix(vault + "/"), path.hasSuffix(".md") else { return nil }
+        guard vault.hasPrefix("/"), path.hasPrefix("/") else { return nil }
+        let root = resolved(vault)
+        let note = resolved(path)
+        guard root != "/", note.hasPrefix(root + "/"), note.hasSuffix(".md") else { return nil }
         // URLQueryItem leaves `+` as is, which a query decoder reads back as a space (real note
         // "Cmd+maj+g sur finder.md"); `/` stays readable, as in Obsidian's own links.
         let allowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+=#"))
+        guard let value = note.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
         var components = URLComponents()
         components.scheme = "obsidian"
         components.host = "open"
-        components.percentEncodedQueryItems = [
-            URLQueryItem(name: "path", value: path.addingPercentEncoding(withAllowedCharacters: allowed))
-        ]
+        components.percentEncodedQueryItems = [URLQueryItem(name: "path", value: value)]
         return components.url
     }
 }

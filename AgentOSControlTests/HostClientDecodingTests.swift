@@ -109,6 +109,18 @@ func makeClient(
         #expect(url?.query() == "path=sessions/a.md&project=PyCharmMiscProject&workspace=default")
     }
 
+    /// `URL.append(queryItems:)` leaves `+` raw and the host reads it as a space (`q=C++` searched "C  ").
+    @Test func plusSignsInQueriesAreEscapedOthersKeepTheirForm() async throws {
+        _ = try await makeClient(body: #"{"query":"q","results":[]}"#, recorder: recorder).vaultSearch("C++ & é #1 100%")
+        _ = try await makeClient(body: #"{"path":"p","title":"T","body":"b"}"#, recorder: recorder)
+            .memoryPage(path: "sessions/a+b.md", workspace: "default", project: "P Q")
+        let queries = await recorder.requests.map { $0.url?.query() ?? "" }
+        #expect(queries == [
+            "k=20&q=C%2B%2B%20%26%20%C3%A9%20%231%20100%25",
+            "path=sessions/a%2Bb.md&project=P%20Q&workspace=default",
+        ])
+    }
+
     @Test func decodesPendingApprovalsWithNullableFields() async throws {
         let approvals = try await makeClient(body: Fixture.pending, recorder: recorder).pendingApprovals()
         #expect(approvals.count == 2)

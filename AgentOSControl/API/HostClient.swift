@@ -183,6 +183,13 @@ actor HostClient {
         if !query.isEmpty {
             // Sorted so requests are deterministic (tests compare query strings).
             url.append(queryItems: query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) })
+            // Foundation leaves a literal `+` raw and the host decodes it as a space (`q=C++`, a path
+            // with a `+`); a space is already `%20`, so every `+` left here is a literal one.
+            if var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                components.percentEncodedQuery = components.percentEncodedQuery?
+                    .replacingOccurrences(of: "+", with: "%2B")
+                url = components.url ?? url
+            }
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
