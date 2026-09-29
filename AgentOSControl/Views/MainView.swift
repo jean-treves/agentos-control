@@ -33,13 +33,14 @@ struct MainView: View {
         case .memory: MemoryView()
         case .storage: StorageView()
         case .jobs: JobsView()
+        case .wiki: WikiView()
         }
     }
 }
 
 /// Sidebar sections, in display order.
 enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
-    case overview, approvals, runs, tasks, memory, storage, jobs
+    case overview, approvals, runs, tasks, memory, storage, jobs, wiki
 
     var id: String { rawValue }
 
@@ -52,6 +53,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .memory: "Mémoire"
         case .storage: "Stockage"
         case .jobs: "Veille emploi"
+        case .wiki: "Wiki"
         }
     }
 
@@ -64,6 +66,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .memory: "brain"
         case .storage: "internaldrive"
         case .jobs: "briefcase"
+        case .wiki: "book.closed"
         }
     }
 }
