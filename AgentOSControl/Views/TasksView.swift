@@ -6,9 +6,10 @@ struct TasksView: View {
     @State private var tasks: [AgentTask] = []
     @State private var error: String?
     @State private var showingNewTask = false
+    @State private var filter = TaskFilter.inProgress
 
     var body: some View {
-        List(tasks) { task in
+        List(shown) { task in
             HStack {
                 VStack(alignment: .leading) {
                     Text(task.title).font(.headline).lineLimit(1)
@@ -23,7 +24,26 @@ struct TasksView: View {
             }
         }
         .overlay {
-            if tasks.isEmpty { ContentUnavailableView(error ?? "Aucune tâche", systemImage: "checklist") }
+            if shown.isEmpty {
+                let empty = filter.emptyState(total: tasks.count)
+                ContentUnavailableView {
+                    Label((tasks.isEmpty ? error : nil) ?? empty.title, systemImage: "checklist")
+                } description: {
+                    if let detail = empty.detail { Text(detail) }
+                }
+            }
+        }
+        .safeAreaInset(edge: .top) {
+            HStack {
+                Picker("Afficher", selection: $filter) {
+                    ForEach(TaskFilter.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                Spacer()
+            }
+            .padding([.horizontal, .top], 8)
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
@@ -38,6 +58,8 @@ struct TasksView: View {
         }
         .task { await pollEvery(.seconds(5)) { await load() } }
     }
+
+    private var shown: [AgentTask] { filter.apply(to: tasks) }
 
     private func load() async {
         do {

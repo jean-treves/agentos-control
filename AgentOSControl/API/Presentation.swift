@@ -80,6 +80,39 @@ extension TaskAction {
     }
 }
 
+/// Tasks list filter. "En cours" hides the terminal statuses; a status the app does not know yet stays visible.
+nonisolated enum TaskFilter: String, CaseIterable, Identifiable, Sendable {
+    case inProgress, all
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .inProgress: "En cours"
+        case .all: "Toutes"
+        }
+    }
+
+    /// kernel/tasks.py `TASK_STATUSES`: these four end a task; queued, running, waiting_approval, deferred
+    /// and paused are still in progress.
+    static let terminalStatuses: Set<String> = ["done", "failed", "killed", "cancelled"]
+
+    func apply(to tasks: [AgentTask]) -> [AgentTask] {
+        switch self {
+        case .all: tasks
+        case .inProgress: tasks.filter { !Self.terminalStatuses.contains($0.status) }
+        }
+    }
+
+    /// What the list says when the filter leaves nothing; `total` is the unfiltered count.
+    func emptyState(total: Int) -> (title: String, detail: String?) {
+        switch self {
+        case .all: ("Aucune tâche", nil)
+        case .inProgress: ("Aucune tâche en cours", total == 0 ? nil : "\(total) tâche\(total > 1 ? "s" : "") au total")
+        }
+    }
+}
+
 extension NewTask {
     /// `TaskIn` requires both; whitespace-only would create an empty agent run.
     nonisolated var isSubmittable: Bool {

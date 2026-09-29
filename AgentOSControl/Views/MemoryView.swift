@@ -1,4 +1,5 @@
 import AppKit
+import os
 import SwiftUI
 
 /// Mémoire (spec §16.3): one search over the vault index (SP4) and ai-memory's sessions and handoffs.
@@ -11,31 +12,50 @@ struct MemoryView: View {
         List {
             // One source down must not hide the other's hits, nor stay silent about it.
             if let message = memory.message, !memory.isEmpty { Text(message).font(.caption).foregroundStyle(.red) }
-            Section("Vault et documents (\(memory.vault.count))") {
-                ForEach(memory.vault) { hit in
-                    Button { open(hit) } label: {
-                        row(MemoryText.fileName(hit.path), MemoryText.plain(hit.snippet ?? ""), hit.source)
+            if memory.source != .sessions {
+                Section("Vault et documents (\(memory.shownVault.count))") {
+                    ForEach(memory.shownVault) { hit in
+                        Button { open(hit) } label: {
+                            row(MemoryText.fileName(hit.path), MemoryText.readable(hit.snippet ?? ""), hit.source)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            Section("Sessions et passations (\(memory.sessions.count))") {
-                ForEach(memory.sessions) { hit in
-                    Button { memory.show(hit, client: model.client) } label: {
-                        row(hit.title, MemoryText.plain(hit.snippet ?? ""), hit.project ?? "")
+            if memory.source != .vault {
+                Section("Sessions et passations (\(memory.shownSessions.count))") {
+                    ForEach(memory.shownSessions) { hit in
+                        Button { memory.show(hit, client: model.client) } label: {
+                            row(hit.title, MemoryText.readable(hit.snippet ?? ""), hit.project ?? "")
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
         .searchable(text: $query, prompt: "Chercher dans la mémoire")
         .onSubmit(of: .search) { memory.search(query, client: model.client) }
-        .overlay {
-            if memory.isEmpty {
-                ContentUnavailableView(
-                    memory.message ?? (memory.searched ? "Aucun résultat" : "Tape une recherche, puis Entrée"),
-                    systemImage: "brain")
+        .safeAreaInset(edge: .top) {
+            HStack {
+                Picker("Source", selection: $memory.source) {
+                    ForEach(MemorySource.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                Spacer()
+                Text("Tri").font(.caption).foregroundStyle(.secondary)
+                Picker("Tri", selection: $memory.sort) {
+                    ForEach(MemorySort.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
             }
+            .padding([.horizontal, .top], 8)
+        }
+        .overlay {
+            if memory.isEmpty { ContentUnavailableView(memory.emptyTitle, systemImage: "brain") }
         }
         .sheet(item: $memory.page) { page in PageSheet(page: page) }
     }
@@ -43,7 +63,8 @@ struct MemoryView: View {
     private func row(_ title: String, _ detail: String, _ caption: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.headline).lineLimit(1)
-            Text(detail).font(.caption).lineLimit(2)
+            // A snippet cut inside the note's frontmatter is empty: no blank line then.
+            if !detail.isEmpty { Text(detail).font(.caption).lineLimit(2) }
             Text(caption).font(.caption2).foregroundStyle(.secondary)
         }
     }
@@ -65,12 +86,32 @@ struct MemoryView: View {
     private(set) var sessions: [MemoryHit] = []
     private(set) var searched = false
     var page: MemoryPage?
+    /// Screen filter and sort; they stay across searches.
+    var source = MemorySource.all
+    var sort = MemorySort.relevance
+    /// Modification date of each vault hit's local file, read once per search (metadata only).
+    private var vaultDates: [String: Date] = [:]
+    @ObservationIgnored private let dateLookup: (String) -> Date?
     private var searchError: String?
     private var pageError: String?
     @ObservationIgnored private(set) var searchTask: Task<Void, Never>?
     @ObservationIgnored private(set) var pageTask: Task<Void, Never>?
 
-    var isEmpty: Bool { vault.isEmpty && sessions.isEmpty }
+    init(dateLookup: @escaping (String) -> Date? = MemoryText.modificationDate(ofPath:)) {
+        self.dateLookup = dateLookup
+    }
+
+    /// What the screen lists: the source filter, then the sort (sessions carry no date: host order).
+    var shownVault: [VaultHit] { source == .sessions ? [] : sort.ordered(vault) { vaultDates[$0.path] } }
+    var shownSessions: [MemoryHit] { source == .vault ? [] : sessions }
+    var isEmpty: Bool { shownVault.isEmpty && shownSessions.isEmpty }
+
+    /// Why the list is empty: a failure first, then whether a search ran, then the filter that hides the hits.
+    var emptyTitle: String {
+        if let message { return message }
+        guard searched else { return "Tape une recherche, puis Entrée" }
+        return source == .all ? "Aucun résultat" : "Aucun résultat dans \(source.label)"
+    }
 
     /// The search failures and the page failure, one per line.
     var message: String? {
@@ -86,6 +127,9 @@ struct MemoryView: View {
             let results = await MemoryResults.search(text, client: client)
             guard !Task.isCancelled else { return }  // a cancelled request's error is not a failure
             vault = results.vault
+            vaultDates = Dictionary(
+                results.vault.compactMap { hit in dateLookup(hit.path).map { (hit.path, $0) } },
+                uniquingKeysWith: { first, _ in first })
             sessions = results.sessions
             searchError = results.error
             pageError = nil
@@ -148,8 +192,83 @@ struct MemoryResults: Equatable {
     }
 }
 
+/// The "Tout / Vault / Sessions" filter: vault = `/api/memory/search` hits, sessions = ai-memory hits.
+enum MemorySource: String, CaseIterable, Identifiable {
+    case all, vault, sessions
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: "Tout"
+        case .vault: "Vault"
+        case .sessions: "Sessions"
+        }
+    }
+}
+
+/// "Pertinence" keeps the host's order; "Date" puts the most recently modified files first.
+enum MemorySort: String, CaseIterable, Identifiable {
+    case relevance, date
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .relevance: "Pertinence"
+        case .date: "Date"
+        }
+    }
+
+    /// Hits without a date (sessions, files that are gone) follow the dated ones in their own order;
+    /// equal dates keep the host's order.
+    func ordered<Hit>(_ hits: [Hit], date dateOf: (Hit) -> Date?) -> [Hit] {
+        guard self == .date else { return hits }
+        var dated: [(index: Int, hit: Hit, date: Date)] = []
+        var undated: [Hit] = []
+        for (index, hit) in hits.enumerated() {
+            if let date = dateOf(hit) { dated.append((index: index, hit: hit, date: date)) } else { undated.append(hit) }
+        }
+        dated.sort { $0.date != $1.date ? $0.date > $1.date : $0.index < $1.index }
+        return dated.map(\.hit) + undated
+    }
+}
+
 /// Pure helpers of the Memory screen (tested).
 enum MemoryText {
+    private nonisolated static let logger = Logger(subsystem: "com.jeantreves.agentoscontrol", category: "memory")
+    /// Closing `---` of a frontmatter block: alone between whitespace (`a---b` is a value, not a fence).
+    private static let closingFence = /\s---(?=\s|$)/
+
+    /// What a snippet row shows: no frontmatter, no highlight tags.
+    static func readable(_ snippet: String) -> String { plain(stripFrontmatter(snippet)) }
+
+    /// Drops a leading YAML frontmatter block. The index flattens the newlines, so the block reads
+    /// `--- tags: [a] status: b --- # Title …`. A snippet cut before the closing `---` is all YAML: nothing
+    /// is shown rather than the metadata. `<mark>` tags of the body are kept.
+    static func stripFrontmatter(_ snippet: String) -> String {
+        let text = snippet.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.hasPrefix("---") else { return snippet }
+        let afterOpening = text.dropFirst(3)
+        guard afterOpening.first?.isWhitespace ?? true else { return snippet }  // `----`, not a fence
+        guard let closing = afterOpening.firstMatch(of: closingFence) else { return "" }
+        return String(afterOpening[closing.range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Modification date of a local absolute path, from the file's metadata only: the file is never opened,
+    /// read or executed. nil for a relative path (sessions) and for a file the index outlived.
+    nonisolated static func modificationDate(ofPath path: String) -> Date? {
+        guard path.hasPrefix("/") else { return nil }
+        do {
+            return try FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            return nil
+        } catch {
+            logger.notice("no date for a memory hit: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
     static func plain(_ snippet: String) -> String {
         snippet.replacingOccurrences(of: "<mark>", with: "").replacingOccurrences(of: "</mark>", with: "")
     }

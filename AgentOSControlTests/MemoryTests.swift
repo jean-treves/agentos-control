@@ -89,6 +89,208 @@ import Testing
     }
 }
 
+/// The snippets of the vault index start with the note's YAML frontmatter, its newlines flattened to spaces
+/// (`--- tags: [tech] status: imported --- # Title …`).
+@Suite struct MemoryFrontmatterTests {
+    @Test func aClosedFrontmatterBlockIsDropped() {
+        let raw = "--- tags: [tech, outillage, imported] status: imported created: 2026-06-20 updated: 2026-08-04 --- # hermes chat (TUI) Le corps"
+        #expect(MemoryText.stripFrontmatter(raw) == "# hermes chat (TUI) Le corps")
+    }
+
+    @Test func aBlockOnSeparateLinesIsDroppedToo() {
+        #expect(MemoryText.stripFrontmatter("---\ntags: [a]\nstatus: x\n---\n# Titre\nCorps") == "# Titre\nCorps")
+    }
+
+    /// The snippet is short: cut inside the YAML, showing it would only show metadata.
+    @Test func aSnippetCutInsideTheFrontmatterShowsNothing() {
+        let raw = "--- tags: [trinavers, character, google-flow] status: active aliases: [Trinatosorus Rex] created: 2026-07-06 summary: Trinatosorus Rex — réf"
+        #expect(MemoryText.stripFrontmatter(raw) == "")
+        #expect(MemoryText.readable(raw) == "")
+        #expect(MemoryText.stripFrontmatter("---") == "")
+    }
+
+    @Test func textWithoutFrontmatterIsUntouched() {
+        for raw in ["# AgentOS v2 — Guide AgentOS is a local **governance**", "",
+                    // A cut snippet starts with an ellipsis: a later `---` is a rule of the note, not YAML.
+                    "…le début --- une règle --- la suite", "---- four dashes", "--dashes"] {
+            #expect(MemoryText.stripFrontmatter(raw) == raw)
+        }
+    }
+
+    @Test func theHighlightOfTheBodyIsKeptAndOnlyReadableRemovesIt() {
+        let raw = "--- tags: [a] --- # Le <mark>Trinavers</mark> et <mark>Hermes</mark>"
+        #expect(MemoryText.stripFrontmatter(raw) == "# Le <mark>Trinavers</mark> et <mark>Hermes</mark>")
+        #expect(MemoryText.readable(raw) == "# Le Trinavers et Hermes")
+    }
+
+    @Test func aHighlightInsideTheFrontmatterGoesWithIt() {
+        #expect(MemoryText.stripFrontmatter("--- engine: <mark>hermes</mark> profile: ask --- # Corps") == "# Corps")
+    }
+
+    @Test func onlyTheFirstBlockAndOnlyASeparatedRuleCloseIt() {
+        #expect(MemoryText.stripFrontmatter("--- description: a---b status: x --- Corps --- reste") == "Corps --- reste")
+        #expect(MemoryText.stripFrontmatter("  --- tags: [a] ---") == "")
+    }
+}
+
+/// Sort by date: dated hits newest first, the others after them in the host's order.
+@Suite struct MemorySortTests {
+    private let old = Date(timeIntervalSince1970: 1_000)
+    private let middle = Date(timeIntervalSince1970: 2_000)
+    private let recent = Date(timeIntervalSince1970: 3_000)
+
+    @Test func relevanceKeepsTheHostOrder() {
+        let dates = ["a": old, "b": recent]
+        #expect(MemorySort.relevance.ordered(["a", "b", "c"], date: { dates[$0] }) == ["a", "b", "c"])
+    }
+
+    @Test func dateOrdersNewestFirstAndUndatedFollowInTheirOwnOrder() {
+        let dates = ["a": old, "c": recent, "e": middle]
+        #expect(MemorySort.date.ordered(["a", "b", "c", "d", "e"], date: { dates[$0] }) == ["c", "e", "a", "b", "d"])
+    }
+
+    @Test func equalDatesKeepTheHostOrder() {
+        let dates = ["a": middle, "b": middle, "c": middle]
+        #expect(MemorySort.date.ordered(["b", "a", "c"], date: { dates[$0] }) == ["b", "a", "c"])
+        #expect(MemorySort.date.ordered([String](), date: { _ in nil }).isEmpty)
+    }
+
+    @Test func choicesAreRelevanceThenDate() {
+        #expect(MemorySort.allCases.map(\.label) == ["Pertinence", "Date"])
+        #expect(MemorySource.allCases.map(\.label) == ["Tout", "Vault", "Sessions"])
+    }
+}
+
+/// The date of a hit is its file's modification date: metadata only, the content is never read.
+@Suite struct MemoryDateLookupTests {
+    private func scratchDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "agentos-memory-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    @Test func aLocalFileGivesItsModificationDateEvenWhenItsContentIsUnreadable() throws {
+        let dir = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appending(path: "note.md")
+        let stamp = Date(timeIntervalSince1970: 1_790_000_000)
+        try Data("secret".utf8).write(to: file)
+        try FileManager.default.setAttributes([.modificationDate: stamp, .posixPermissions: 0o000], ofItemAtPath: file.path)
+        // mode 000: reading the content would fail, so a date proves only the metadata was asked for.
+        #expect(!FileManager.default.isReadableFile(atPath: file.path))
+        #expect(MemoryText.modificationDate(ofPath: file.path) == stamp)
+    }
+
+    @Test func aMissingFileARelativePathAndAnEmptyPathHaveNoDate() throws {
+        let dir = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(MemoryText.modificationDate(ofPath: dir.appending(path: "gone.md").path) == nil)
+        #expect(MemoryText.modificationDate(ofPath: "sessions/a.md") == nil)
+        #expect(MemoryText.modificationDate(ofPath: "") == nil)
+    }
+}
+
+/// Source filter and sort on the model, with an injected date lookup (no file is touched).
+@MainActor @Suite struct MemoryFilterTests {
+    let gate = Gate()
+
+    private func client(slow: String = "none") -> HostClient {
+        let gate = gate
+        return HostClient(baseURL: URL(string: "http://127.0.0.1:3107")!, token: { nil }, transport: { request in
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let key = items.first { $0.name == "q" }?.value ?? ""
+            if key == slow { await gate.wait() }
+            let body: String
+            switch request.url?.path() {
+            case "/api/memory/search":
+                body = #"{"results":[{"source":"vault","path":"/v/\#(key)-a.md","snippet":null,"score":null,"method":"fts"},{"source":"claude","path":"/v/\#(key)-b.md","snippet":null,"score":null,"method":"fts"},{"source":"vault","path":"/v/\#(key)-c.md","snippet":null,"score":null,"method":"fts"}]}"#
+            default:
+                body = #"{"results":[{"path":"sessions/\#(key).md","title":"S","snippet":null,"project":"p","workspace":"w","rank":1.0}]}"#
+            }
+            return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        })
+    }
+
+    private func searched(dates: [String: Date] = [:]) async -> MemoryModel {
+        let model = MemoryModel(dateLookup: { dates[$0] })
+        model.search("hermes", client: client())
+        await model.searchTask?.value
+        return model
+    }
+
+    @Test func everythingByRelevanceIsTheDefault() async {
+        let model = await searched()
+        #expect(model.source == .all && model.sort == .relevance)
+        #expect(model.shownVault.map(\.path) == ["/v/hermes-a.md", "/v/hermes-b.md", "/v/hermes-c.md"])
+        #expect(model.shownSessions.map(\.path) == ["sessions/hermes.md"])
+    }
+
+    @Test func theSourceFilterShowsOneSectionOrBoth() async {
+        let model = await searched()
+        model.source = .vault
+        #expect(model.shownVault.count == 3 && model.shownSessions.isEmpty && !model.isEmpty)
+        model.source = .sessions
+        #expect(model.shownVault.isEmpty && model.shownSessions.count == 1 && !model.isEmpty)
+        model.source = .all
+        #expect(model.shownVault.count == 3 && model.shownSessions.count == 1)
+    }
+
+    @Test func aFilterWithoutHitsIsEmptyEvenThoughTheOtherSourceHasSome() async {
+        let model = MemoryModel(dateLookup: { _ in nil })
+        model.search("hermes", client: client())
+        await model.searchTask?.value
+        model.source = .sessions
+        model.search("hermes", client: HostClient(
+            baseURL: URL(string: "http://127.0.0.1:3107")!, token: { nil }, transport: { request in
+                (Data(#"{"results":[]}"#.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }))
+        await model.searchTask?.value
+        #expect(model.isEmpty && model.searched)
+        #expect(model.emptyTitle == "Aucun résultat dans Sessions")
+        model.source = .all
+        #expect(model.emptyTitle == "Aucun résultat")
+    }
+
+    @Test func dateSortPutsTheNewestFirstAndKeepsTheUndatedAfterInHostOrder() async {
+        let model = await searched(dates: ["/v/hermes-a.md": Date(timeIntervalSince1970: 100),
+                                            "/v/hermes-c.md": Date(timeIntervalSince1970: 200)])
+        model.sort = .date
+        #expect(model.shownVault.map(\.path) == ["/v/hermes-c.md", "/v/hermes-a.md", "/v/hermes-b.md"])
+        // Sessions have no date: unchanged.
+        #expect(model.shownSessions.map(\.path) == ["sessions/hermes.md"])
+        model.sort = .relevance
+        #expect(model.shownVault.map(\.path) == ["/v/hermes-a.md", "/v/hermes-b.md", "/v/hermes-c.md"])
+    }
+
+    @Test func filterAndSortSurviveANewSearch() async {
+        let model = await searched()
+        model.source = .vault
+        model.sort = .date
+        model.search("trinavers", client: client())
+        await model.searchTask?.value
+        #expect(model.source == .vault && model.sort == .date)
+        #expect(model.vault.first?.path == "/v/trinavers-a.md")
+    }
+
+    /// T9.4's guarantee still holds for the dates: a slower, older search never writes over the latest one.
+    @Test func aSlowerOlderSearchNeverWritesItsDates() async {
+        var asked: [String] = []
+        let model = MemoryModel(dateLookup: { asked.append($0); return nil })
+        let client = client(slow: "aaa")
+        model.search("aaa", client: client)
+        let older = model.searchTask
+        model.search("bbb", client: client)
+        await model.searchTask?.value
+        #expect(asked.allSatisfy { $0.hasPrefix("/v/bbb") } && asked.count == 3)
+
+        await gate.open()
+        await older?.value
+        #expect(asked.allSatisfy { $0.hasPrefix("/v/bbb") } && asked.count == 3)
+        #expect(model.vault.map(\.path).allSatisfy { $0.hasPrefix("/v/bbb") })
+    }
+}
+
 /// Holds a request until the test lets it go, to make the answer of an older request arrive last.
 actor Gate {
     private var waiters: [CheckedContinuation<Void, Never>] = []

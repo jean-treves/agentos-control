@@ -32,8 +32,8 @@ struct OverviewView: View {
             .padding()
             Divider()
             VSplitView {
-                FloorView().frame(minHeight: 160)
-                HealthView().frame(minHeight: 240)
+                FloorView().frame(maxWidth: .infinity, minHeight: 160, maxHeight: .infinity)
+                HealthView().frame(maxWidth: .infinity, minHeight: 240, maxHeight: .infinity)
             }
         }
         .task { await pollEvery(.seconds(30)) { await loadGlance() } }

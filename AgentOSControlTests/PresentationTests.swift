@@ -95,4 +95,54 @@ private func run(source: String?) -> RunSummary {
     }
 }
 
+/// The Tasks filter "En cours / Toutes". Statuses are kernel/tasks.py TASK_STATUSES.
+@Suite struct TaskFilterTests {
+    private func tasks(_ statuses: [String]) throws -> [AgentTask] {
+        let rows = statuses.enumerated().map {
+            #"{"task_id":"t_\#($0.offset)","title":"T\#($0.offset)","engine":"claude","profile":"ask","status":"\#($0.element)"}"#
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(TaskPage.self, from: Data(#"{"tasks":[\#(rows.joined(separator: ","))]}"#.utf8)).tasks
+    }
+
+    /// The live list of 2026-09-29: 42 tasks, 28 done, 7 killed, 5 cancelled, 2 paused.
+    @Test func inProgressKeepsOnlyTheTwoPausedOfTheLiveList() throws {
+        let live = try tasks(Array(repeating: "done", count: 28) + Array(repeating: "killed", count: 7)
+            + Array(repeating: "cancelled", count: 5) + ["paused", "paused"])
+        #expect(live.count == 42)
+        #expect(TaskFilter.inProgress.apply(to: live).map(\.status) == ["paused", "paused"])
+        #expect(TaskFilter.all.apply(to: live).count == 42)
+    }
+
+    @Test(arguments: [
+        ("queued", true), ("running", true), ("waiting_approval", true), ("deferred", true), ("paused", true),
+        ("done", false), ("failed", false), ("killed", false), ("cancelled", false),
+        // A status the app does not know yet is shown, never hidden.
+        ("some_future_status", true),
+    ])
+    func onlyTerminalStatusesLeaveTheInProgressList(status: String, shown: Bool) throws {
+        let kept = TaskFilter.inProgress.apply(to: try tasks([status]))
+        #expect(kept.count == (shown ? 1 : 0))
+    }
+
+    @Test func filteringKeepsTheHostOrder() throws {
+        let list = try tasks(["paused", "done", "queued", "killed", "running"])
+        #expect(TaskFilter.inProgress.apply(to: list).map(\.taskId) == ["t_0", "t_2", "t_4"])
+    }
+
+    @Test func emptyStateNamesTheFilterAndCountsEverything() {
+        #expect(TaskFilter.inProgress.emptyState(total: 40).title == "Aucune tâche en cours")
+        #expect(TaskFilter.inProgress.emptyState(total: 40).detail == "40 tâches au total")
+        #expect(TaskFilter.inProgress.emptyState(total: 1).detail == "1 tâche au total")
+        #expect(TaskFilter.inProgress.emptyState(total: 0).detail == nil)
+        #expect(TaskFilter.all.emptyState(total: 0).title == "Aucune tâche")
+    }
+
+    @Test func labelsAreTheTwoChoices() {
+        #expect(TaskFilter.allCases.map(\.label) == ["En cours", "Toutes"])
+        #expect(TaskFilter.allCases.first == .inProgress)
+    }
+}
+
 private struct TaskPage: Decodable { let tasks: [AgentTask] }
