@@ -157,6 +157,14 @@ nonisolated struct BreakerStatus: Decodable, Sendable, Hashable {
     let reason: String?
 }
 
+/// The few `/api/glance` fields the Overview shows (the cockpit reads the rest).
+nonisolated struct Glance: Decodable, Sendable, Hashable {
+    let offers: Int?
+    let jobsDate: String?
+    let reclaimGb: Double?
+    let scanDate: String?
+}
+
 /// `GET /api/health/deep` (kernel/health.py `deep_check`).
 nonisolated struct DeepHealth: Decodable, Sendable, Hashable {
     let ok: Bool

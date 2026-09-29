@@ -156,6 +156,15 @@ func makeClient(
         #expect(!open.canLaunch && open.consecutiveFailures == 3 && open.reason == "breaker open")
     }
 
+    @Test func decodesGlanceWithMissingFields() async throws {
+        let full = try await makeClient(
+            body: #"{"offers":47,"jobs_date":"2026-09-28","reclaim_gb":3.1,"scan_date":"2026-09-11","cpu_24h":[]}"#,
+            recorder: recorder).glance()
+        #expect(full.offers == 47 && full.jobsDate == "2026-09-28" && full.reclaimGb == 3.1)
+        let empty = try await makeClient(body: "{}", recorder: recorder).glance()
+        #expect(empty.offers == nil && empty.scanDate == nil)
+    }
+
     @Test func decodesDeepHealthKillSwitchAndHealth() async throws {
         let deep = try await makeClient(body: Fixture.deepHealth, recorder: recorder).deepHealth()
         #expect(!deep.ok)

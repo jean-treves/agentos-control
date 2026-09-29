@@ -73,6 +73,10 @@ actor HostClient {
         try await get(DeepHealth.self, "/api/health/deep", timeout: Self.deepHealthTimeout)
     }
 
+    func glance() async throws(HostError) -> Glance {
+        try await get(Glance.self, "/api/glance")
+    }
+
     func killSwitch() async throws(HostError) -> Bool {
         try await get(KillSwitchEnvelope.self, "/api/killswitch").killswitch
     }
