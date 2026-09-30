@@ -7,15 +7,17 @@ nonisolated enum HostError: Error, Equatable, Sendable, LocalizedError {
     case unreachable(String)
     /// No control token on this Mac (or read-only mode): the request was never sent.
     case tokenUnavailable
-    /// 503: the host has no control token in its Keychain.
+    /// 503 without a readable reason: the host has no control token in its Keychain.
     case controlDisabled
     /// 401: the host rejected the token.
     case unauthorized
     case notFound
     case http(Int)
-    /// Any other non-2xx that carries FastAPI's `{"detail": "…"}`: the host's own reason (already redacted).
+    /// Any other non-2xx (503 included) that carries FastAPI's `{"detail": "…"}`: the host's own reason.
+    /// Shown as is; not every route redacts it yet (the 400 of `/api/commands` does not), so it is host
+    /// text, rendered verbatim, never parsed.
     case host(Int, String)
-    /// 400/422: the host refused the parameters; carries its own reason (already redacted), shown as is.
+    /// 400/422: the host refused the parameters; carries its own reason, same caveat as `host`.
     case refused(String)
     case decoding(String)
 
@@ -270,7 +272,10 @@ actor HostClient {
         case 200..<300: return data
         case 401: throw .unauthorized
         case 404: throw .notFound
-        case 503: throw .controlDisabled
+        case 503:
+            // 503 is also « harness facts unreadable » (brief validation): keep the host's reason.
+            if let detail = Self.hostDetail(in: data) { throw .host(status, detail) }
+            throw .controlDisabled
         case 400, 422: throw .refused(Self.hostDetail(in: data) ?? "requête refusée (\(status))")
         default:
             if let detail = Self.hostDetail(in: data) { throw .host(status, detail) }

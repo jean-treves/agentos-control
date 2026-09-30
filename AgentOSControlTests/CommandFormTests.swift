@@ -43,6 +43,21 @@ import Testing
         #expect(CommandForm.parseISO("demain") == nil)
     }
 
+    /// The host reads a naive date as UTC (`replace(tzinfo=UTC)`): reading it as this Mac's local time
+    /// would shift a scheduled launch by the offset (2 h in Paris) without JT seeing it.
+    @Test func aDateWithoutTimeZoneIsUTC() {
+        let utc = ISO8601DateFormatter().date(from: "2026-09-28T19:43:00Z")!
+        #expect(CommandForm.parseISO("2026-09-28T19:43:00") == utc)
+        #expect(CommandForm.parseISO("2026-09-28T19:43:00.250000") == utc.addingTimeInterval(0.25))
+        #expect(CommandForm.parseISO("2026-09-28T19:43:00+02:00") == utc.addingTimeInterval(-2 * 3600))
+        let naiveDefault = CommandSpec(
+            name: "x", title: "X", description: "d", interactive: false,
+            params: [CommandParam(name: "at", label: "Quand", kind: "datetime", choices: nil,
+                                  defaultValue: "2026-09-28T19:43:00", required: true)])
+        #expect(CommandForm.payload(naiveDefault, values: [:], dates: CommandForm.defaultDates(naiveDefault))
+                == ["at": "2026-09-28T19:43:00Z"])
+    }
+
     @Test func anOptionalDateStaysUnsentUntilPicked() {
         let optional = CommandSpec(
             name: "x", title: "X", description: "d", interactive: false,
@@ -77,5 +92,31 @@ import Testing
                                  presence: HumanPresence { _ in false }, notifier: nil, socket: nil)
         #expect(await model.runCommand(spec, params: [:]) == nil)
         #expect(await recorder.requests.isEmpty)
+        // The sheet shows this sentence: a silent nil would leave JT with a form that does nothing.
+        #expect(model.failureReason == ControlModel.notConfirmed)
     }
+
+    @MainActor @Test func aRefusedLaunchGivesTheSheetTheHostsReason() async {
+        let model = ControlModel(
+            client: makeClient(status: 400, body: #"{"detail":"Brief : valeur hors liste"}"#, recorder: RequestRecorder()),
+            presence: HumanPresence { _ in true }, notifier: nil, socket: nil)
+        #expect(await model.runCommand(spec, params: [:]) == nil)
+        #expect(model.failureReason == "Refusé par le host : Brief : valeur hors liste")
+    }
+
+    @MainActor @Test func theTouchIDPromptNamesTheBriefBeingLaunched() async {
+        let reasons = ReasonRecorder()
+        let model = ControlModel(client: makeClient(recorder: RequestRecorder()),
+                                 presence: HumanPresence { reason in await reasons.add(reason); return false },
+                                 notifier: nil, socket: nil)
+        let passover = CommandSpec(name: "passover", title: "Passover", description: "d", interactive: false, params: [])
+        _ = await model.runCommand(passover, params: ["brief": "2026-09-29-dm.md"])
+        _ = await model.runCommand(passover, params: [:])
+        #expect(await reasons.values == ["lancer « Passover » sur « 2026-09-29-dm.md »", "lancer « Passover »"])
+    }
+}
+
+actor ReasonRecorder {
+    private(set) var values: [String] = []
+    func add(_ reason: String) { values.append(reason) }
 }

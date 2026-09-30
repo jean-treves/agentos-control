@@ -189,10 +189,19 @@ final class ControlModel {
         }
     }
 
+    /// `runCommand` and `validateBrief` return nothing without an error when JT refuses Touch ID:
+    /// nothing left the app.
+    static let notConfirmed = "Annulé : Touch ID non confirmé, rien n'a été envoyé."
+
+    /// Why the last `runCommand` / `validateBrief` did nothing: the host's refusal, else Touch ID.
+    var failureReason: String { lastError ?? Self.notConfirmed }
+
     /// Touch ID, then the command; nil when JT did not confirm or the host refused (see `lastError`).
     func runCommand(_ spec: CommandSpec, params: [String: String]) async -> CommandLaunch? {
         lastError = nil  // a refused Touch ID must not show an older error
-        guard await presence.verify("lancer « \(spec.title) »") else { return nil }
+        // The prompt names the brief: from a row or from the form, JT sees which note leaves.
+        let target = params["brief"].map { " sur « \($0) »" } ?? ""
+        guard await presence.verify("lancer « \(spec.title) »\(target)") else { return nil }
         do {
             let launch = try await client.runCommand(spec.name, params: params)
             lastError = nil

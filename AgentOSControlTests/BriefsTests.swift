@@ -38,6 +38,20 @@ import Testing
         }
     }
 
+    /// Validation fails on the host (503 with a reason): the list shows that reason, not a missing token.
+    @MainActor @Test func aFailedValidationGivesTheReasonToShow() async {
+        let client = makeClient(status: 503, body: #"{"detail":"faits du harnais illisibles"}"#, recorder: recorder)
+        let model = ControlModel(client: client, presence: HumanPresence { _ in true }, notifier: nil, socket: nil)
+        #expect(await model.validateBrief("2026-09-29-dm.md") == false)
+        #expect(model.failureReason == "faits du harnais illisibles (HTTP 503).")
+    }
+
+    /// The editor shows this sentence next to the button and stays open.
+    @Test func aRefusedSaveReadsAsTheHostsReason() {
+        #expect(HostError.host(409, "brief lancé : modification refusée").localizedDescription
+                == "brief lancé : modification refusée (HTTP 409).")
+    }
+
     /// The section hosts the command list and the briefs in one split: both must load on appearance.
     @MainActor @Test func theCommandsSectionLoadsTheCatalogueAndTheBriefs() async {
         let model = ControlModel(client: makeClient(body: #"{"commands":[],"briefs":[]}"#, recorder: recorder),

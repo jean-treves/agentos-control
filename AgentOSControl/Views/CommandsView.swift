@@ -5,12 +5,10 @@ import SwiftUI
 struct CommandsView: View {
     @Environment(ControlModel.self) private var model
     @State private var specs: [CommandSpec] = []
+    /// The catalogue failed to load; a launch's error is shown in the form's sheet instead.
     @State private var error: String?
     @State private var lastLaunch: String?
     @State private var active: CommandSpec?
-
-    /// `ControlModel` returns nil without an error when JT refuses Touch ID: nothing left the app.
-    static let notConfirmed = "Annulé : Touch ID non confirmé, rien n'a été envoyé."
 
     var body: some View {
         VSplitView {
@@ -27,7 +25,7 @@ struct CommandsView: View {
                     Text(verbatim: spec.description).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Lancer…") { active = spec }
+                Button("Lancer…") { Task { await open(spec) } }
                     .disabled(spec.interactive)  // Pitch: its own window (T8.7)
             }
         }
@@ -55,15 +53,19 @@ struct CommandsView: View {
         }
     }
 
-    private func launch(_ spec: CommandSpec, _ values: [String: String]) async -> Bool {
-        guard let launch = await model.runCommand(spec, params: values) else {
-            error = model.lastError ?? Self.notConfirmed
-            return false
-        }
+    /// The form opens on a fresh catalogue: the choices (briefs JT just validated, runs to promote)
+    /// change between two launches, and a sheet keeps the spec it was given.
+    private func open(_ spec: CommandSpec) async {
+        await load()
+        active = specs.first { $0.name == spec.name } ?? spec
+    }
+
+    /// nil: launched. Otherwise the sentence the form shows (refused by the host, or Touch ID not confirmed).
+    private func launch(_ spec: CommandSpec, _ values: [String: String]) async -> String? {
+        guard let launch = await model.runCommand(spec, params: values) else { return model.failureReason }
         lastLaunch = Self.summary(launch)
-        error = nil
         await load()  // choices (briefs, runs to promote) change after a launch
-        return true
+        return nil
     }
 
     static func summary(_ launch: CommandLaunch) -> String {

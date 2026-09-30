@@ -9,7 +9,14 @@ struct BriefsView: View {
     @Environment(ControlModel.self) private var model
     @State private var briefs: [BriefSummary] = []
     @State private var editing: BriefDetail?
+    /// false until the first successful load: a list being fetched is not an empty list.
+    @State private var loaded = false
+    /// The last poll failed; cleared by the next one that succeeds.
+    @State private var loadError: String?
+    /// Outcome of JT's last action (open, validate, launch).
     @State private var message: String?
+    /// A validation or launch is in flight (Touch ID included): no second click.
+    @State private var busy = false
 
     var body: some View {
         List(briefs) { brief in
@@ -25,15 +32,23 @@ struct BriefsView: View {
                 Button("Ouvrir…") { Task { await open(brief.name) } }
                 Button("Obsidian") { NSWorkspace.shared.open(Self.obsidianURL(for: brief.name)) }
                 if !brief.isValidated {
-                    Button("Valider") { Task { await validate(brief.name) } }
+                    Button("Valider") { run { await validate(brief.name) } }.disabled(busy)
                 } else if let passover {
-                    Button("Lancer") { Task { await launch(passover, brief.name) } }
+                    Button("Lancer") { run { await launch(passover, brief.name) } }.disabled(busy)
                 }
             }
         }
-        .overlay { if briefs.isEmpty { ContentUnavailableView("Aucun brief en attente", systemImage: "doc.text") } }
+        .overlay {
+            if !loaded {
+                if loadError == nil { ProgressView("Chargement des briefs…") }
+            } else if briefs.isEmpty {
+                ContentUnavailableView("Aucun brief en attente", systemImage: "doc.text")
+            }
+        }
         .safeAreaInset(edge: .bottom) {
-            if let message { Text(verbatim: message).font(.caption).foregroundStyle(.secondary).padding(6) }
+            if let shown = loadError ?? message {
+                Text(verbatim: shown).font(.caption).foregroundStyle(.secondary).padding(6)
+            }
         }
         .sheet(item: $editing) { detail in
             BriefEditor(detail: detail) { text in await save(detail.name, text) }
@@ -55,35 +70,50 @@ struct BriefsView: View {
     }
 
     private func load() async {
-        do { briefs = try await model.client.briefs() } catch { message = error.localizedDescription }
+        do {
+            briefs = try await model.client.briefs()
+            loaded = true
+            loadError = nil
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    private func run(_ work: @escaping () async -> Void) {
+        guard !busy else { return }
+        busy = true  // set before the Task starts: a fast second click finds it already taken
+        Task {
+            await work()
+            busy = false
+        }
     }
 
     private func open(_ name: String) async {
         do { editing = try await model.client.brief(name) } catch { message = error.localizedDescription }
     }
 
-    private func save(_ name: String, _ text: String) async -> Bool {
+    /// nil: saved, the editor closes. Otherwise the reason (409 launched, 400, token…) shown in the editor.
+    private func save(_ name: String, _ text: String) async -> String? {
         do {
             try await model.client.saveBrief(name, text: text)
             message = "\(name) : brouillon enregistré, à valider de nouveau"
             await load()
-            return true
+            return nil
         } catch {
-            message = error.localizedDescription
-            return false
+            return error.localizedDescription
         }
     }
 
     private func validate(_ name: String) async {
         message = await model.validateBrief(name)
             ? "\(name) : validé, sha256 au journal"
-            : (model.lastError ?? CommandsView.notConfirmed)
+            : model.failureReason
         await load()
     }
 
     private func launch(_ spec: CommandSpec, _ name: String) async {
         let launch = await model.runCommand(spec, params: ["brief": name])
-        message = launch.map(CommandsView.summary) ?? model.lastError ?? CommandsView.notConfirmed
+        message = launch.map(CommandsView.summary) ?? model.failureReason
         await load()
     }
 }
@@ -91,15 +121,19 @@ struct BriefsView: View {
 /// The whole note, editable; saving always yields a draft (spec §17.4).
 struct BriefEditor: View {
     let detail: BriefDetail
-    let save: (String) async -> Bool
+    /// nil: saved. A sentence: refused, shown here with the sheet kept open.
+    let save: (String) async -> String?
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
+    @State private var error: String?
+    @State private var saving = false
 
     var body: some View {
         VStack(alignment: .leading) {
             Text(verbatim: "\(detail.name) · \(detail.status) · \(detail.sha256.prefix(19))…")
                 .font(.caption).foregroundStyle(.secondary)
             TextEditor(text: $text).font(.body.monospaced())
+            if let error { Text(verbatim: error).font(.callout).foregroundStyle(.red) }
         }
         .padding()
         .frame(minWidth: 640, minHeight: 480)
@@ -107,8 +141,16 @@ struct BriefEditor: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Annuler") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Enregistrer (brouillon)") { Task { if await save(text) { dismiss() } } }
-                    .disabled(text == detail.text)
+                Button("Enregistrer (brouillon)") {
+                    saving = true
+                    error = nil
+                    Task {
+                        error = await save(text)
+                        saving = false
+                        if error == nil { dismiss() }
+                    }
+                }
+                .disabled(text == detail.text || saving)
             }
         }
     }

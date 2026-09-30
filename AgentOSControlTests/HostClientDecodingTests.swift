@@ -369,6 +369,26 @@ func makeClient(
         await #expect(throws: expected) { try await client.setKillSwitch(false) }
     }
 
+    /// 503 is two things: no control token (no reason to read) and a validation that cannot run
+    /// (a reason the host gives): the second must not read « pas de jeton ».
+    @Test func aServiceUnavailableKeepsTheHostsReason() async {
+        let detail = "faits du harnais illisibles (config/harness_facts.yaml) : validation impossible"
+        let client = makeClient(status: 503, body: #"{"detail":"\#(detail)"}"#, recorder: recorder)
+        let error = await #expect(throws: HostError.self) { _ = try await client.validateBrief("2026-09-29-dm.md") }
+        #expect(error == .host(503, detail))
+        #expect(error?.localizedDescription == "\(detail) (HTTP 503).")
+    }
+
+    /// The host has already acted when `POST /api/commands/{name}` answers: a result value that is not a
+    /// string must not turn a launched command into « réponse illisible » (and a second click).
+    @Test func aLaunchResultWithNonStringValuesStillDecodes() async throws {
+        let body = #"{"command":"promote","task_ids":[],"run_ids":[],"result":{"branch":"b","files_changed":3,"pushed":false,"ratio":0.5,"note":null,"paths":["a","b"]}}"#
+        let launch = try await makeClient(body: body, recorder: recorder).runCommand("promote", params: [:])
+        #expect(launch.result == ["branch": "b", "files_changed": "3", "pushed": "false", "ratio": "0.5",
+                                  "paths": "(valeur non textuelle)"])
+        #expect(launch.command == "promote")
+    }
+
     /// The host explains its failures (`{"detail": "ai-memory : connection refused"}`): JT reads that,
     /// not a bare status.
     @Test func aFailureCarriesTheHostsOwnReason() async {

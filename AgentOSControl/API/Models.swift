@@ -322,4 +322,33 @@ nonisolated struct CommandLaunch: Decodable, Sendable, Hashable {
     let taskIds: [String]
     let runIds: [String]
     let result: [String: String]?
+
+    fileprivate enum CodingKeys: String, CodingKey { case command, taskIds, runIds, result }
+}
+
+extension CommandLaunch {
+    /// The host has already acted when this is decoded: a `result` value that is not a string (a number,
+    /// a list) is shown as text, not allowed to fail the whole reply and invite a second launch.
+    nonisolated init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        command = try container.decode(String.self, forKey: .command)
+        taskIds = try container.decode([String].self, forKey: .taskIds)
+        runIds = try container.decode([String].self, forKey: .runIds)
+        result = try container.decodeIfPresent([String: LooseText?].self, forKey: .result)?
+            .compactMapValues { $0?.text }
+    }
+}
+
+/// A JSON scalar read as text; null is dropped by the caller, a list or object becomes a placeholder.
+nonisolated private struct LooseText: Decodable {
+    let text: String
+
+    nonisolated init(from decoder: any Decoder) throws {
+        let value = try decoder.singleValueContainer()
+        if let string = try? value.decode(String.self) { text = string }
+        else if let flag = try? value.decode(Bool.self) { text = flag ? "true" : "false" }
+        else if let integer = try? value.decode(Int.self) { text = String(integer) }
+        else if let number = try? value.decode(Double.self) { text = String(number) }
+        else { text = "(valeur non textuelle)" }
+    }
 }

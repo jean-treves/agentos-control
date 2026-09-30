@@ -4,16 +4,20 @@ import SwiftUI
 /// choices come from the host: they are shown as plain text, never parsed as Markdown.
 struct CommandForm: View {
     let spec: CommandSpec
-    let submit: ([String: String]) async -> Bool
+    /// nil: sent, the sheet closes. A sentence: refused or not confirmed, shown here, sheet kept open
+    /// (an error in the parent view would sit under the sheet, unseen).
+    let submit: ([String: String]) async -> String?
     @Environment(\.dismiss) private var dismiss
     @State private var values: [String: String] = [:]
     @State private var dates: [String: Date] = [:]
     @State private var sending = false
+    @State private var error: String?
 
     var body: some View {
         Form {
             Text(verbatim: spec.description).font(.callout).foregroundStyle(.secondary)
             ForEach(spec.params, id: \.name) { field($0) }
+            if let error { Text(verbatim: error).font(.callout).foregroundStyle(.red) }
         }
         .formStyle(.grouped)
         .onAppear {
@@ -25,9 +29,11 @@ struct CommandForm: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Lancer") {
                     sending = true
+                    error = nil
                     Task {
-                        if await submit(Self.payload(spec, values: values, dates: dates)) { dismiss() }
+                        error = await submit(Self.payload(spec, values: values, dates: dates))
                         sending = false
+                        if error == nil { dismiss() }
                     }
                 }
                 .disabled(!Self.isComplete(spec, values: values) || sending)
@@ -48,7 +54,13 @@ struct CommandForm: View {
                 }
             }
         case "datetime":
-            DatePicker(param.label, selection: date(param.name))
+            if param.required {
+                DatePicker(param.label, selection: date(param.name))
+            } else {
+                // An untouched optional date must not look chosen: it is unset (and unsent) until asked.
+                Toggle(isOn: dateIsSet(param.name)) { Text(verbatim: "Définir : \(param.label)") }
+                if dates[param.name] != nil { DatePicker(param.label, selection: date(param.name)) }
+            }
         default:
             if param.name == "prompt" || param.name == "pitch" {
                 VStack(alignment: .leading) {
@@ -63,6 +75,10 @@ struct CommandForm: View {
 
     private func text(_ name: String) -> Binding<String> {
         Binding(get: { values[name] ?? "" }, set: { values[name] = $0 })
+    }
+
+    private func dateIsSet(_ name: String) -> Binding<Bool> {
+        Binding(get: { dates[name] != nil }, set: { dates[name] = $0 ? Date() : nil })
     }
 
     private func date(_ name: String) -> Binding<Date> {
@@ -107,15 +123,22 @@ struct CommandForm: View {
         spec.params.allSatisfy { !$0.required || $0.kind == "datetime" || !(values[$0.name] ?? "").isEmpty }
     }
 
-    /// Python's `isoformat()`: with or without fractional seconds, with an offset or naive (local time,
-    /// as `datetime.fromisoformat` would be read by the host's own clock).
+    /// Python's `isoformat()`: with or without fractional seconds, with an offset or naive. A naive
+    /// date is UTC, as the host reads it (`replace(tzinfo=UTC)`), whatever this Mac's time zone.
     static func parseISO(_ raw: String) -> Date? {
-        let zoned = ISO8601DateFormatter()
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let naive = ISO8601DateFormatter()
-        naive.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
-        naive.timeZone = .current
-        return zoned.date(from: raw) ?? fractional.date(from: raw) ?? naive.date(from: raw)
+        let utc = TimeZone(identifier: "GMT")
+        let naive: ISO8601DateFormatter.Options = [.withFullDate, .withTime, .withColonSeparatorInTime]
+        // Fractional layouts first: the naive one without fractions would quietly drop the `.250000`.
+        let layouts: [ISO8601DateFormatter.Options] = [
+            [.withInternetDateTime, .withFractionalSeconds], [.withInternetDateTime],
+            naive.union(.withFractionalSeconds), naive,
+        ]
+        for layout in layouts {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = layout
+            formatter.timeZone = utc
+            if let date = formatter.date(from: raw) { return date }
+        }
+        return nil
     }
 }

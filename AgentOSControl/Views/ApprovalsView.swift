@@ -61,6 +61,7 @@ struct ApprovalRow: View {
             }
             HStack {
                 let outOfMandate = ApprovalOrigin.isOutOfMandate(state.approval)
+                // T8.6: only the label differs for now; « relancer avec ce mandat » gets its server semantics there.
                 Button(outOfMandate ? "Relancer avec ce mandat (Touch ID)" : "Approuver (Touch ID)") {
                     Task { await model.approve(state.id) }
                 }
