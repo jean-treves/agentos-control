@@ -5,22 +5,22 @@ import Testing
 @Suite struct MemoryTests {
     @Test func snippetsLoseTheirMarkTags() {
         #expect(MemoryText.plain("…je développe le <mark>Trinavers</mark>, un…") == "…je développe le Trinavers, un…")
-        #expect(MemoryText.fileName("/Users/jean/Obsidian/JT-Vault/08-Tech-Notes/hermes chat.md") == "hermes chat")
+        #expect(MemoryText.fileName("/Users/me/Vault/08-Tech-Notes/hermes chat.md") == "hermes chat")
     }
 
     @Test func vaultNotesOpenInObsidianOtherFilesDoNot() {
-        let vault = "/Users/jean/Obsidian/JT-Vault"
+        let vault = "/Users/me/Vault"
         let url = MemoryText.obsidianURL("\(vault)/08-Tech-Notes/x y.md", vault: vault)
-        #expect(url?.absoluteString == "obsidian://open?path=/Users/jean/Obsidian/JT-Vault/08-Tech-Notes/x%20y.md")
-        #expect(MemoryText.obsidianURL("/Users/jean/PyCharmMiscProject/infra/AgentOS/documents/a.md", vault: vault) == nil)
+        #expect(url?.absoluteString == "obsidian://open?path=/Users/me/Vault/08-Tech-Notes/x%20y.md")
+        #expect(MemoryText.obsidianURL("/Users/me/code/AgentOS/documents/a.md", vault: vault) == nil)
         #expect(MemoryText.obsidianURL("\(vault)-other/a.md", vault: vault) == nil)
     }
 
     /// Real vault names contain `+` (Cmd+maj+g sur finder.md); `+` must not be read back as a space.
     @Test func obsidianURLEscapesWhatWouldSplitTheQuery() {
-        let vault = "/Users/jean/Obsidian/JT-Vault"
+        let vault = "/Users/me/Vault"
         let url = MemoryText.obsidianURL("\(vault)/08-Tech-Notes/Imported/Cmd+maj+g & é #1 100%.md", vault: vault)
-        #expect(url?.absoluteString == "obsidian://open?path=/Users/jean/Obsidian/JT-Vault/08-Tech-Notes/Imported/Cmd%2Bmaj%2Bg%20%26%20%C3%A9%20%231%20100%25.md")
+        #expect(url?.absoluteString == "obsidian://open?path=/Users/me/Vault/08-Tech-Notes/Imported/Cmd%2Bmaj%2Bg%20%26%20%C3%A9%20%231%20100%25.md")
     }
 
     @Test func sessionHitsAreIdentifiedByWorkspaceProjectAndPath() throws {
@@ -32,21 +32,21 @@ import Testing
     /// A note that is not under the vault is only ever revealed, never opened: `.app`, `.command`,
     /// `.dmg` and the like would launch. (`obsidianURL` is already nil for those.)
     @Test func onlyVaultNotesOpenEverythingElseIsRevealed() {
-        let vault = "/Users/jean/Obsidian/JT-Vault"
+        let vault = "/Users/me/Vault"
         #expect(MemoryText.openAction("\(vault)/a b.md", vault: vault)
-            == .obsidian(URL(string: "obsidian://open?path=/Users/jean/Obsidian/JT-Vault/a%20b.md")!))
-        for path in ["/Applications/Tool.app", "/Users/jean/run.command", "/Users/jean/x.dmg", "\(vault)/x.command"] {
+            == .obsidian(URL(string: "obsidian://open?path=/Users/me/Vault/a%20b.md")!))
+        for path in ["/Applications/Tool.app", "/Users/me/run.command", "/Users/me/x.dmg", "\(vault)/x.command"] {
             #expect(MemoryText.openAction(path, vault: vault) == .reveal(URL(fileURLWithPath: path)))
         }
     }
 
     @Test func pathsThatEscapeTheVaultAreNotVaultNotes() {
-        let vault = "/Users/jean/Obsidian/JT-Vault"
+        let vault = "/Users/me/Vault"
         #expect(MemoryText.obsidianURL("\(vault)/../../etc/x.md", vault: vault) == nil)
         #expect(MemoryText.obsidianURL("\(vault)/a/../../JT-Vault-other/x.md", vault: vault) == nil)
         // `..` that stays inside the vault is resolved, not rejected.
         #expect(MemoryText.obsidianURL("\(vault)/a/../b.md", vault: vault)?.absoluteString
-            == "obsidian://open?path=/Users/jean/Obsidian/JT-Vault/b.md")
+            == "obsidian://open?path=/Users/me/Vault/b.md")
         // A trailing slash on the setting changes nothing.
         #expect(MemoryText.obsidianURL("\(vault)/b.md", vault: vault + "/") != nil)
     }
