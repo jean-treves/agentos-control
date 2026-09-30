@@ -34,6 +34,17 @@ rsync -a --delete "$BUILT/" "$DEST/"
 codesign --verify --strict "$DEST"
 echo "installé : $DEST ($(codesign -dv "$DEST" 2>&1 | grep -o 'Signature=.*'))"
 
+# Build copies share the bundle id: Spotlight opened the Xcode Debug build instead of this one
+# (T9.6, 2026-09-30). Keep only $DEST in Launch Services; the copies stay on disk.
+readonly LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+shopt -s nullglob
+for copy in build/Build/Products/*/"$APP_NAME.app" \
+            "$HOME"/Library/Developer/Xcode/DerivedData/AgentOSControl-*/Build/Products/*/"$APP_NAME.app"; do
+  "$LSREGISTER" -u "$copy" 2>/dev/null || true
+done
+shopt -u nullglob
+"$LSREGISTER" -f "$DEST"
+
 if [[ -d "$OLD_APP" ]]; then
   mkdir -p "$ARCHIVE_DIR"
   # No .app suffix: the archive must not register as a second launchable app.
