@@ -13,6 +13,13 @@ nonisolated struct Approval: Decodable, Sendable, Hashable, Identifiable {
     let target: String?
     let runId: String?
     let timeoutAt: Int
+    /// SP8 origin (spec §17.5); nil for requests from before SP8 or from the gateway.
+    var actionClass: String? = nil
+    var originEngine: String? = nil
+    var originModel: String? = nil
+    var originMode: String? = nil
+    var escalatedBy: String? = nil
+    var reason: String? = nil
 
     var deadline: Date { Date(timeIntervalSince1970: TimeInterval(timeoutAt)) }
 }
@@ -281,4 +288,38 @@ nonisolated struct IgnoredItem: Decodable, Sendable, Hashable {
 nonisolated struct LaunchReply: Decodable, Sendable, Hashable {
     let started: Bool
     let reason: String?
+}
+
+/// One entry of `GET /api/commands` (spec §15.2): the app builds its form from it.
+nonisolated struct CommandSpec: Decodable, Sendable, Hashable, Identifiable {
+    let name: String
+    let title: String
+    let description: String
+    /// true: the app opens a dedicated window (Pitch) instead of the generic form.
+    let interactive: Bool
+    let params: [CommandParam]
+    var id: String { name }
+}
+
+nonisolated struct CommandParam: Decodable, Sendable, Hashable {
+    let name: String
+    let label: String
+    /// `text`, `choice` or `datetime` (ISO 8601).
+    let kind: String
+    let choices: [String]?
+    let defaultValue: String?
+    let required: Bool
+    /// Shown instead of the value (`accept_diffs` → « Accepter les diffs »); absent for most fields.
+    var labels: [String: String]? = nil
+
+    enum CodingKeys: String, CodingKey { case name, label, kind, choices, defaultValue = "default", required, labels }
+}
+
+/// `POST /api/commands/{name}`: tasks created, runs started (none for a scheduled command), or
+/// the result of an immediate action (a promotion).
+nonisolated struct CommandLaunch: Decodable, Sendable, Hashable {
+    let command: String
+    let taskIds: [String]
+    let runIds: [String]
+    let result: [String: String]?
 }

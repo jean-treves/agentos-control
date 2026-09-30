@@ -15,6 +15,8 @@ nonisolated enum HostError: Error, Equatable, Sendable, LocalizedError {
     case http(Int)
     /// Any other non-2xx that carries FastAPI's `{"detail": "…"}`: the host's own reason (already redacted).
     case host(Int, String)
+    /// 400/422: the host refused the parameters; carries its own reason (already redacted), shown as is.
+    case refused(String)
     case decoding(String)
 
     var errorDescription: String? {
@@ -26,6 +28,7 @@ nonisolated enum HostError: Error, Equatable, Sendable, LocalizedError {
         case .notFound: "Introuvable (404)."
         case .http(let status): "Erreur HTTP \(status)."
         case .host(let status, let detail): "\(detail) (HTTP \(status))."
+        case .refused(let reason): "Refusé par le host : \(reason)"
         case .decoding(let detail): "Réponse illisible (\(detail))."
         }
     }
@@ -139,6 +142,18 @@ actor HostClient {
         try await get(Applications.self, "/api/jobsearch/applications")
     }
 
+    func commands() async throws(HostError) -> [CommandSpec] {
+        try await get(CommandsEnvelope.self, "/api/commands").commands
+    }
+
+    func briefs() async throws(HostError) -> [BriefSummary] {
+        try await get(BriefsEnvelope.self, "/api/briefs").briefs
+    }
+
+    func brief(_ name: String) async throws(HostError) -> BriefDetail {
+        try await get(BriefDetail.self, "/api/briefs/\(name)")
+    }
+
     // MARK: Control (Bearer)
 
     func decide(approvalID: String, approve: Bool) async throws(HostError) {
@@ -177,6 +192,25 @@ actor HostClient {
         try decode(LaunchReply.self, try await send("/api/jobsearch/run"))
     }
 
+    /// Runs a command of the catalogue (spec §15.2); `.refused` carries the host's reason for a 400.
+    func runCommand(_ name: String, params: [String: String]) async throws(HostError) -> CommandLaunch {
+        let body: Data
+        do { body = try JSONEncoder().encode(["params": params]) } catch { throw .decoding("encodage de la commande") }
+        return try decode(CommandLaunch.self, try await send("/api/commands/\(name)", body: body))
+    }
+
+    /// The host always stores a draft: a validated brief edited here needs a new validation.
+    func saveBrief(_ name: String, text: String) async throws(HostError) {
+        let body: Data
+        do { body = try JSONEncoder().encode(["text": text]) } catch { throw .decoding("encodage du brief") }
+        _ = try await send("/api/briefs/\(name)", body: body, method: "PUT")
+    }
+
+    /// Returns the sha256 the host journaled.
+    func validateBrief(_ name: String) async throws(HostError) -> String {
+        try decode(BriefValidation.self, try await send("/api/briefs/\(name)/validate")).sha256
+    }
+
     // MARK: Plumbing
 
     /// `timeout` nil keeps the session's 5 s.
@@ -189,7 +223,7 @@ actor HostClient {
     }
 
     private func send(
-        _ path: String, query: [String: String] = [:], body: Data? = nil
+        _ path: String, query: [String: String] = [:], body: Data? = nil, method: String = "POST"
     ) async throws(HostError) -> Data {
         let secret: String?
         do { secret = try await token() } catch {
@@ -197,13 +231,13 @@ actor HostClient {
             throw .tokenUnavailable
         }
         guard let secret else { throw .tokenUnavailable }
-        var request = makeRequest("POST", path, query: query)
+        var request = makeRequest(method, path, query: query)
         request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
         if let body {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        logger.notice("POST \(path, privacy: .public)")
+        logger.notice("\(method, privacy: .public) \(path, privacy: .public)")
         return try await perform(request)
     }
 
@@ -237,6 +271,7 @@ actor HostClient {
         case 401: throw .unauthorized
         case 404: throw .notFound
         case 503: throw .controlDisabled
+        case 400, 422: throw .refused(Self.hostDetail(in: data) ?? "requête refusée (\(status))")
         default:
             if let detail = Self.hostDetail(in: data) { throw .host(status, detail) }
             throw .http(status)
@@ -269,3 +304,4 @@ nonisolated private struct TaskIDEnvelope: Decodable { let taskId: String }
 nonisolated private struct TaskStatusEnvelope: Decodable { let status: String }
 nonisolated private struct VaultEnvelope: Decodable { let results: [VaultHit] }
 nonisolated private struct MemoryEnvelope: Decodable { let results: [MemoryHit] }
+nonisolated private struct CommandsEnvelope: Decodable { let commands: [CommandSpec] }

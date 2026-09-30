@@ -189,6 +189,34 @@ final class ControlModel {
         }
     }
 
+    /// Touch ID, then the command; nil when JT did not confirm or the host refused (see `lastError`).
+    func runCommand(_ spec: CommandSpec, params: [String: String]) async -> CommandLaunch? {
+        lastError = nil  // a refused Touch ID must not show an older error
+        guard await presence.verify("lancer « \(spec.title) »") else { return nil }
+        do {
+            let launch = try await client.runCommand(spec.name, params: params)
+            lastError = nil
+            return launch
+        } catch {
+            report(error)
+            return nil
+        }
+    }
+
+    /// Touch ID, then the validation (spec §17.4); false when JT did not confirm or the host refused.
+    func validateBrief(_ name: String) async -> Bool {
+        lastError = nil  // a refused Touch ID must not show an older error
+        guard await presence.verify("valider le brief « \(name) »") else { return false }
+        do {
+            _ = try await client.validateBrief(name)
+            lastError = nil
+            return true
+        } catch {
+            report(error)
+            return false
+        }
+    }
+
     /// Touch ID, then the /optimize scan in the background; the sentence shown to JT.
     func startScan() async -> String {
         await launch("lancer l'analyse du stockage", label: "Analyse") { () async throws(HostError) in

@@ -60,6 +60,14 @@ enum Fixture {
     static let breakerOpen = """
     {"consecutive_failures":3,"opened_at":1790000200.0,"run_starts":[],"can_launch":false,"reason":"breaker open"}
     """
+    static let commands = """
+    {"commands":[
+      {"name":"optimisation","title":"Optimisation","description":"Diagnostic du Mac","interactive":false,"params":[]},
+      {"name":"passover","title":"Passover","description":"Déléguer","interactive":false,"params":[
+        {"name":"brief","label":"Brief","kind":"choice","choices":["2026-09-28-sample.md"],"default":null,"required":true,"labels":{"2026-09-28-sample.md":"Échantillon"}},
+        {"name":"at","label":"Quand","kind":"datetime","choices":null,"default":"2026-09-28T19:43:00+00:00","required":true}]},
+      {"name":"pitch","title":"Pitch","description":"Jury","interactive":true,"params":[]}]}
+    """
     static let deepHealth = """
     {"ok":false,"generated_at":"2026-09-23T23:01:02+0200","checks":[
       {"name":"disk","ok":true,"detail":"120 GB free"},{"name":"ollama","ok":false,"detail":"connection refused"}]}
@@ -304,6 +312,47 @@ func makeClient(
         let body = try JSONSerialization.jsonObject(with: try #require(request.httpBody)) as? [String: String]
         #expect(body == ["title": "Sample", "prompt": "Do it", "project": "quant/sample",
                          "engine": "claude", "profile": "ask"])
+    }
+
+    @Test func decodesTheCommandCatalogue() async throws {
+        let specs = try await makeClient(body: Fixture.commands, recorder: recorder).commands()
+        #expect(specs.map(\.name) == ["optimisation", "passover", "pitch"])
+        #expect(specs[1].params[0].choices == ["2026-09-28-sample.md"] && specs[1].params[0].defaultValue == nil)
+        #expect(specs[1].params[0].labels == ["2026-09-28-sample.md": "Échantillon"] && specs[1].params[1].labels == nil)
+        #expect(specs[1].params[1].defaultValue == "2026-09-28T19:43:00+00:00" && specs[2].interactive)
+    }
+
+    /// Label keys are the server's raw values (`accept_diffs`): the snake_case key strategy must not touch them.
+    @Test func labelKeysKeepTheirSnakeCase() async throws {
+        let body = #"{"commands":[{"name":"c","title":"C","description":"d","interactive":false,"params":[{"name":"mode","label":"Mode","kind":"choice","choices":["accept_diffs"],"default":"accept_diffs","required":true,"labels":{"accept_diffs":"Accepter les diffs"}}]}]}"#
+        let spec = try await makeClient(body: body, recorder: recorder).commands()[0]
+        #expect(spec.params[0].labels?["accept_diffs"] == "Accepter les diffs")
+    }
+
+    @Test func aBadRequestWithoutAStringDetailStillSaysRefused() async {
+        let client = makeClient(status: 422, body: #"{"detail":[{"loc":["body"],"msg":"field required"}]}"#, recorder: recorder)
+        await #expect(throws: HostError.refused("requête refusée (422)")) {
+            try await client.runCommand("passover", params: [:])
+        }
+    }
+
+    @Test func runCommandPostsTheParamsWithTheToken() async throws {
+        let client = makeClient(
+            body: #"{"command":"passover","task_ids":["t_1"],"run_ids":["r_1"],"result":null}"#, recorder: recorder)
+        let launch = try await client.runCommand("passover", params: ["brief": "b.md", "mode": "pr"])
+        #expect(launch.taskIds == ["t_1"] && launch.runIds == ["r_1"] && launch.result == nil)
+        let request = try #require(await recorder.requests.first)
+        #expect(request.url?.path() == "/api/commands/passover")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
+        let body = try JSONSerialization.jsonObject(with: try #require(request.httpBody)) as? [String: [String: String]]
+        #expect(body == ["params": ["brief": "b.md", "mode": "pr"]])
+    }
+
+    @Test func aRefusalCarriesTheServerReason() async {
+        let client = makeClient(status: 400, body: #"{"detail":"Brief : valeur hors liste"}"#, recorder: recorder)
+        await #expect(throws: HostError.refused("Brief : valeur hors liste")) {
+            try await client.runCommand("passover", params: [:])
+        }
     }
 
     @Test func missingTokenSendsNothing() async throws {

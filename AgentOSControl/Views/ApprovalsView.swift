@@ -3,14 +3,31 @@ import SwiftUI
 /// Pending approvals: tool, excerpt, rule, profile, task, time left; Approve (Touch ID) or Deny.
 struct ApprovalsView: View {
     @Environment(ControlModel.self) private var model
+    @State private var engine: String?  // nil: every engine
+
+    private var engines: [String] { ApprovalOrigin.engines(model.openApprovals.map(\.approval)) }
+
+    /// A filter on an engine whose requests are all settled would hide the others: drop it then.
+    private var shown: [ApprovalState] {
+        guard let engine, engines.contains(engine) else { return model.openApprovals }
+        return model.openApprovals.filter { ($0.approval.originEngine ?? "") == engine }
+    }
 
     var body: some View {
         Group {
-            if model.openApprovals.isEmpty {
+            if shown.isEmpty {
                 ContentUnavailableView("Aucune approbation en attente", systemImage: "checkmark.shield")
             } else {
-                List(model.openApprovals) { state in
+                List(shown) { state in
                     ApprovalRow(state: state, context: model.contexts[state.id])
+                }
+            }
+        }
+        .toolbar {
+            Picker("Moteur", selection: $engine) {
+                Text("Tous les moteurs").tag(String?.none)
+                ForEach(engines, id: \.self) { name in
+                    Text(verbatim: name.isEmpty ? "origine inconnue" : name).tag(String?.some(name))
                 }
             }
         }
@@ -38,9 +55,16 @@ struct ApprovalRow: View {
             if let summary = context?.summary, !summary.isEmpty {
                 Text(summary).font(.caption).foregroundStyle(.secondary)
             }
+            let origin = ApprovalOrigin.label(state.approval)
+            if !origin.isEmpty {
+                Text(verbatim: origin).font(.caption).foregroundStyle(.secondary)
+            }
             HStack {
-                Button("Approuver (Touch ID)") { Task { await model.approve(state.id) } }
-                    .buttonStyle(.borderedProminent)
+                let outOfMandate = ApprovalOrigin.isOutOfMandate(state.approval)
+                Button(outOfMandate ? "Relancer avec ce mandat (Touch ID)" : "Approuver (Touch ID)") {
+                    Task { await model.approve(state.id) }
+                }
+                .buttonStyle(.borderedProminent)
                 Button("Refuser", role: .destructive) { Task { await model.deny(state.id) } }
                 switch state.phase {
                 case .awaitingPresence: Text("Touch ID…").font(.caption)
