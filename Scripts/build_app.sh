@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# `zsh build_app.sh` reads this file as zsh (no shopt): run it under bash instead.
+[ -n "$ZSH_VERSION" ] && exec bash "$0" "$@"
 # Release build → ad hoc signature → "/Applications/AgentOS.app", then archive the former
 # "AgentOS Control.app" (moved, never deleted; spec §16.2). Idempotent: rerun after every change.
 # APPS_DIR / ARCHIVE_DIR override the destinations, to test the script away from /Applications.
