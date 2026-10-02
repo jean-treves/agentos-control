@@ -30,6 +30,17 @@ import Testing
         #expect(await recorder.requests.isEmpty)
     }
 
+    /// Review T8.5, F10a: « Valider » sends the listed version's seal, so the host seals what JT saw.
+    @MainActor @Test func validationSendsTheSealOfTheListedVersion() async throws {
+        let model = ControlModel(client: makeClient(body: #"{"name":"b","status":"validé","sha256":"s"}"#,
+                                                    recorder: recorder),
+                                 presence: HumanPresence { _ in true }, notifier: nil, socket: nil)
+        #expect(await model.validateBrief("2026-09-29-dm.md", shown: "abc123"))
+        let request = try #require(await recorder.requests.first)
+        let body = try JSONSerialization.jsonObject(with: try #require(request.httpBody)) as? [String: String]
+        #expect(body == ["sha256": "abc123"])
+    }
+
     @Test func editingALaunchedBriefIsRefusedWithTheReason() async {
         let client = makeClient(status: 409, body: #"{"detail":"brief lancé : modification refusée"}"#,
                                 recorder: recorder)

@@ -9,6 +9,9 @@ nonisolated struct BriefSummary: Decodable, Sendable, Hashable, Identifiable {
     let project: String
     let outputMode: String
     let agenticMode: String
+    /// The listed version's seal, sent back by « Valider » (host refuses it once the text changed).
+    /// Optional: a host older than this field still validates without it.
+    let sha256: String?
 
     var id: String { name }
     var isValidated: Bool { status == "validé" }

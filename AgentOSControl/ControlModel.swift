@@ -213,11 +213,11 @@ final class ControlModel {
     }
 
     /// Touch ID, then the validation (spec §17.4); false when JT did not confirm or the host refused.
-    func validateBrief(_ name: String) async -> Bool {
+    func validateBrief(_ name: String, shown: String? = nil) async -> Bool {
         lastError = nil  // a refused Touch ID must not show an older error
         guard await presence.verify("valider le brief « \(name) »") else { return false }
         do {
-            _ = try await client.validateBrief(name)
+            _ = try await client.validateBrief(name, shown: shown)
             lastError = nil
             return true
         } catch {

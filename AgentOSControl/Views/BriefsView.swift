@@ -32,7 +32,7 @@ struct BriefsView: View {
                 Button("Ouvrir…") { Task { await open(brief.name) } }
                 Button("Obsidian") { NSWorkspace.shared.open(Self.obsidianURL(for: brief.name)) }
                 if !brief.isValidated {
-                    Button("Valider") { run { await validate(brief.name) } }.disabled(busy)
+                    Button("Valider") { run { await validate(brief.name, shown: brief.sha256) } }.disabled(busy)
                 } else if let passover {
                     Button("Lancer") { run { await launch(passover, brief.name) } }.disabled(busy)
                 }
@@ -104,8 +104,8 @@ struct BriefsView: View {
         }
     }
 
-    private func validate(_ name: String) async {
-        message = await model.validateBrief(name)
+    private func validate(_ name: String, shown: String?) async {
+        message = await model.validateBrief(name, shown: shown)
             ? "\(name) : validé, sha256 au journal"
             : model.failureReason
         await load()

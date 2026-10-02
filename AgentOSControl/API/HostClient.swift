@@ -208,9 +208,14 @@ actor HostClient {
         _ = try await send("/api/briefs/\(name)", body: body, method: "PUT")
     }
 
-    /// Returns the sha256 the host journaled.
-    func validateBrief(_ name: String) async throws(HostError) -> String {
-        try decode(BriefValidation.self, try await send("/api/briefs/\(name)/validate")).sha256
+    /// Returns the sha256 the host journaled. With ``shown`` (the listed version's seal) the host
+    /// answers 409 if the brief changed since it was listed: JT validates what he saw.
+    func validateBrief(_ name: String, shown: String? = nil) async throws(HostError) -> String {
+        var body: Data?
+        if let shown {
+            do { body = try JSONEncoder().encode(["sha256": shown]) } catch { throw .decoding("encodage du sceau") }
+        }
+        return try decode(BriefValidation.self, try await send("/api/briefs/\(name)/validate", body: body)).sha256
     }
 
     // MARK: Plumbing
