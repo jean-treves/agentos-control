@@ -86,6 +86,27 @@ import Testing
                 == "promote : branch b, sha abc")
     }
 
+    /// F2: « Ménage : appliquer » in the generic form preselected the first open proposal, one JT never saw.
+    /// The two cleanup commands are reached from Runs ▸ Ménage… only, where the list is shown first.
+    @Test func cleanupCommandsAreNotInTheGenericList() {
+        let specs = ["optimisation", "menage", "passover", "menage-appliquer", "pitch"].map {
+            CommandSpec(name: $0, title: $0, description: "d", interactive: false, params: [])
+        }
+        #expect(CommandsView.listed(specs).map(\.name) == ["optimisation", "passover", "pitch"])
+        #expect(CommandsView.listed([]).isEmpty)
+    }
+
+    /// F1: a command that takes long asks for its own timeout through the model, the path every sheet uses.
+    @MainActor @Test func aSlowCommandAsksForItsOwnTimeout() async {
+        let recorder = RequestRecorder()
+        let model = ControlModel(
+            client: makeClient(body: #"{"command":"drawback","task_ids":[],"run_ids":[],"result":null}"#, recorder: recorder),
+            presence: HumanPresence { _ in true }, notifier: nil, socket: nil)
+        _ = await model.runCommand(spec, params: [:])
+        _ = await model.runCommand(spec, params: [:], timeout: HostClient.slowCommandTimeout)
+        #expect(await recorder.requests.map(\.timeoutInterval) == [60, HostClient.slowCommandTimeout])
+    }
+
     @MainActor @Test func runCommandWithoutPresenceSendsNothing() async {
         let recorder = RequestRecorder()
         let model = ControlModel(client: makeClient(recorder: recorder),

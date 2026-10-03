@@ -197,13 +197,14 @@ final class ControlModel {
     var failureReason: String { lastError ?? Self.notConfirmed }
 
     /// Touch ID, then the command; nil when JT did not confirm or the host refused (see `lastError`).
-    func runCommand(_ spec: CommandSpec, params: [String: String]) async -> CommandLaunch? {
+    /// `timeout` nil keeps the session's 5 s; a command that moves files or waits for Haiku asks for more.
+    func runCommand(_ spec: CommandSpec, params: [String: String], timeout: TimeInterval? = nil) async -> CommandLaunch? {
         lastError = nil  // a refused Touch ID must not show an older error
         // The prompt names the brief: from a row or from the form, JT sees which note leaves.
         let target = params["brief"].map { " sur « \($0) »" } ?? ""
         guard await presence.verify("lancer « \(spec.title) »\(target)") else { return nil }
         do {
-            let launch = try await client.runCommand(spec.name, params: params)
+            let launch = try await client.runCommand(spec.name, params: params, timeout: timeout)
             lastError = nil
             return launch
         } catch {

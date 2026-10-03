@@ -43,6 +43,20 @@ extension RunDetail {
     }
 }
 
+extension RunDetail {
+    /// Haiku's notes about a run (`haiku.note`, `haiku.summary`: 90 s at most each) are journaled after
+    /// `run.ended`; the timeline keeps listening that long.
+    nonisolated static let lateReceipts: TimeInterval = 120
+
+    /// While the run runs, and for `lateReceipts` after it ended: `updatedAt` is set by `run_store.finish` at
+    /// the end. An old run is read once; polling it would reread the whole journal every 2 s for nothing.
+    nonisolated func keepsListening(at now: Date) -> Bool {
+        guard status != "running" else { return true }
+        guard let updatedAt else { return false }
+        return now.timeIntervalSince1970 - Double(updatedAt) <= Self.lateReceipts
+    }
+}
+
 extension JournalEvent {
     /// One readable line per receipt; empty for events that need no detail.
     nonisolated var summary: String {
@@ -63,7 +77,9 @@ extension JournalEvent {
         case "supervisor.killed", "review.skipped": [data?.reason]
         default: []
         }
-        return parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        // Every part is the journal's text: the executor's own command, its words, a raw error. One line, no
+        // bidi override: a new line would hide the end of a command behind the timeline's two-line limit.
+        return parts.compactMap { $0?.plainText() }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 

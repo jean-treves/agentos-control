@@ -100,12 +100,16 @@ import Testing
         #expect(!follow.isFollowing)
     }
 
-    /// First reading of a pane that has not scrolled yet: 150 lines laid out, the offset still 0 (found in
-    /// the window test: it paused the follow before the first line was followed).
+    /// First reading of a pane that has not scrolled yet: 150 lines get laid out, the content grows from the
+    /// empty pane to 2 107 points while the offset stays 0 (found in the window test: it paused the follow
+    /// before the first line was followed). The pane never read anything before: all zeros.
     @Test func theFirstReadingIsNotAGesture() {
         var follow = ScrollFollow()
-        follow.scrolled(from: metrics(bottom: 268, content: 2107), to: metrics(bottom: 268, content: 2107))
+        follow.scrolled(from: metrics(bottom: 268, content: 20, viewport: 268), to: metrics(bottom: 268, content: 2107, viewport: 268))
         #expect(follow.isFollowing)
+        var fresh = ScrollFollow()
+        fresh.scrolled(from: metrics(bottom: 0, content: 0, viewport: 0), to: metrics(bottom: 268, content: 2107, viewport: 268))
+        #expect(fresh.isFollowing)
     }
 
     /// Up while a line arrives in the same reading: still a gesture.
@@ -134,10 +138,13 @@ import Testing
         #expect(!follow.isFollowing)
     }
 
-    /// A pane shorter than its window has nothing to scroll: it follows.
-    @Test func aShortPaneFollows() {
+    /// A pane shorter than its window has nothing to scroll: a bounce moves its bottom edge up a little and
+    /// that is no gesture. It still follows, and so does it when it grows.
+    @Test func aShortPaneThatBouncesStillFollows() {
         var follow = ScrollFollow()
-        follow.scrolled(from: metrics(bottom: 300, content: 40), to: metrics(bottom: 300, content: 40))
+        follow.scrolled(from: metrics(bottom: 300, content: 40), to: metrics(bottom: 262, content: 40))
+        #expect(follow.isFollowing)
+        follow.scrolled(from: metrics(bottom: 262, content: 40), to: metrics(bottom: 300, content: 90))
         #expect(follow.isFollowing)
     }
 
@@ -152,6 +159,7 @@ import Testing
     private let proposed = [
         "proposal": "0123456789ab", "count": "2", "total_mb": "412.5",
         "items": "worktree /w/run-1 (400.0 Mo) — fini\ntmp /h/tmp/x (12.5 Mo)",
+        "kept": "3 gardé(s) : relecture non promue (réussie, échouée ou annulée)",
     ]
 
     @Test func aProposalReadsAsItsListAndItsSize() throws {
@@ -159,6 +167,20 @@ import Testing
         #expect(proposal.id == "0123456789ab" && proposal.count == 2 && proposal.totalMB == "412.5")
         #expect(proposal.items == ["worktree /w/run-1 (400.0 Mo) — fini", "tmp /h/tmp/x (12.5 Mo)"])
         #expect(!proposal.isEmpty)
+    }
+
+    /// F4: folders kept on purpose are told with the list, also when nothing is left to tidy.
+    @Test func foldersKeptOnPurposeAreTold() throws {
+        #expect(try #require(CleanupProposal(result: proposed)).kept == "3 gardé(s) : relecture non promue (réussie, échouée ou annulée)")
+        let nothing = ["proposal": "0123456789ab", "count": "0", "total_mb": "0.0", "items": "rien à ranger",
+                       "kept": "3 gardé(s) : relecture non promue"]
+        let proposal = try #require(CleanupProposal(result: nothing))
+        #expect(proposal.isEmpty && proposal.kept == "3 gardé(s) : relecture non promue")
+        var hostile = proposed
+        hostile["kept"] = "1 gardé\u{202E}\n(s)"
+        #expect(try #require(CleanupProposal(result: hostile)).kept == "1 gardé  (s)")
+        // an older host sends none
+        #expect(try #require(CleanupProposal(result: ["proposal": "p", "count": "0"])).kept == nil)
     }
 
     @Test func anEmptyProposalCannotBeApplied() throws {
@@ -189,31 +211,10 @@ import Testing
                 == "0 appliqué(s), 0 ignoré(s).")
     }
 
-    /// `menage` waits for Haiku (up to 90 s) and for the size of every candidate: not the session's 5 s.
-    @Test func proposingWaitsLongerThanTheSessionDefault() async throws {
-        let recorder = RequestRecorder()
-        let body = #"{"command":"menage","task_ids":[],"run_ids":[],"result":{"proposal":"0123456789ab","count":"0","total_mb":"0.0","items":"rien à ranger"}}"#
-        let launch = try await makeClient(body: body, recorder: recorder)
-            .runCommand("menage", params: [:], timeout: HostClient.slowCommandTimeout)
-        #expect(CleanupProposal(result: launch.result)?.id == "0123456789ab")
-        let request = try #require(await recorder.requests.first)
-        #expect(request.timeoutInterval == HostClient.slowCommandTimeout && request.timeoutInterval > 90)
-        #expect(request.url?.path() == "/api/commands/menage" && request.httpMethod == "POST")
-        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
-    }
-
     @Test func otherCommandsKeepTheSessionTimeout() async throws {
         let recorder = RequestRecorder()
         _ = try await makeClient(body: #"{"command":"echo","task_ids":[],"run_ids":[],"result":null}"#, recorder: recorder)
             .runCommand("echo", params: [:])
         #expect(try #require(await recorder.requests.first).timeoutInterval == 60)  // URLRequest's own default
-    }
-
-    /// A second « Appliquer »: the host answers 400 and the sheet shows its reason as is.
-    @Test func aSecondApplyIsRefusedWithTheHostsReason() async {
-        let client = makeClient(status: 400, body: #"{"detail":"Proposition : valeur hors liste"}"#, recorder: RequestRecorder())
-        await #expect(throws: HostError.refused("Proposition : valeur hors liste")) {
-            try await client.runCommand("menage-appliquer", params: ["proposal": "0123456789ab"])
-        }
     }
 }

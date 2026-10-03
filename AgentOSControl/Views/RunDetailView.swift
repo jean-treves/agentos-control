@@ -51,14 +51,9 @@ struct RunDetailView: View {
         .task(id: runID) { await follow() }
     }
 
-    /// Haiku's notes about a run (`haiku.note`, `haiku.summary`: 90 s at most each) are journaled after
-    /// `run.ended`; the timeline keeps listening that long.
-    private static let lateReceipts: Duration = .seconds(120)
-
-    /// Polls every 2 s while the run is running, and for `lateReceipts` after it ended.
+    /// Polls every 2 s while the run is running, and for `RunDetail.lateReceipts` after it ended.
     private func follow() async {
         var runSeq = 0
-        var endedAt: ContinuousClock.Instant?
         while !Task.isCancelled {
             do {
                 let fresh = try await model.client.run(id: runID, after: runSeq)
@@ -76,11 +71,7 @@ struct RunDetailView: View {
             } catch {
                 self.error = error.localizedDescription
             }
-            if let detail, detail.status != "running" {
-                let ended = endedAt ?? ContinuousClock.now
-                endedAt = ended
-                if ContinuousClock.now - ended > Self.lateReceipts { return }
-            }
+            if let detail, !detail.keepsListening(at: .now) { return }
             try? await Task.sleep(for: .seconds(2))
         }
     }

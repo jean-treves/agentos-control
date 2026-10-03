@@ -54,6 +54,8 @@ nonisolated struct DialogueLine: Decodable, Sendable, Hashable {
     /// `HH:MM:SS` of the ISO timestamp.
     var clock: String { String(ts.dropFirst(11).prefix(8)) }
 
+    var header: String { "\(clock) \(role) │" }
+
     /// nil for anything that is not a `{ts, role, text}` record (the host passes such a line through as is).
     static func parse(_ raw: String) -> DialogueLine? {
         try? JSONDecoder().decode(DialogueLine.self, from: Data(raw.utf8))

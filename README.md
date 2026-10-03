@@ -28,8 +28,10 @@ human where they are, and the approve path must prove a human is actually there.
   control characters, caps the buffer at 2 000 lines and shows every line as plain text. Scrolling up pauses
   the follow, coming back to the end resumes it. Haiku's notes and the arbiter's decisions show as one line
   in the run's timeline.
-- Runs ▸ Ménage… lists what Haiku proposes to tidy (worktrees and temp folders of finished runs); « Appliquer »
-  asks for Touch ID and the host applies the frozen list once (a second apply is refused).
+- Runs ▸ Ménage… lists what Haiku proposes to tidy (worktrees and temp folders of finished runs, and how many
+  are kept on purpose); « Appliquer » asks for Touch ID and the host applies the frozen list once (a second apply
+  is refused; the first report stays on screen). The two cleanup commands are not in the Commands tab: the list
+  must be seen before it is applied.
 
 ## Build, test, install
 

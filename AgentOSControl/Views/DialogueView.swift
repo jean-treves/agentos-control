@@ -47,12 +47,9 @@ struct DialogueTerminal: View {
                 Text(verbatim: follow.isFollowing ? "suivi" : "suivi suspendu").font(.caption).foregroundStyle(.secondary)
             }
             ScrollView {
-                // Plain `Text(verbatim:)`: a line is whatever a tool printed, never Markdown or a link.
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(buffer.numbered) { row in
-                        Text(verbatim: "\(row.line.clock) \(row.line.role) │ \(row.line.text)")
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        DialogueRow(line: row.line)
                     }
                 }
                 .textSelection(.enabled)
@@ -74,5 +71,21 @@ struct DialogueTerminal: View {
         }
         .padding(6)
         .frame(minWidth: 240)
+    }
+}
+
+/// One line: the header (clock, role) and the body are two texts side by side. The body is what a tool printed
+/// and may hold a new line; its next line stays under the body and never starts at the left edge, where a
+/// forged « 12:00:07 agentos │ … » would pass for a real header.
+struct DialogueRow: View {
+    let line: DialogueLine
+
+    var body: some View {
+        // Plain `Text(verbatim:)`: a line is whatever a tool printed, never Markdown or a link.
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(verbatim: line.header).fixedSize()
+            Text(verbatim: line.text).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(.caption, design: .monospaced))
     }
 }

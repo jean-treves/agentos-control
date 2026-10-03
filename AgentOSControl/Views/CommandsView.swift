@@ -18,7 +18,7 @@ struct CommandsView: View {
     }
 
     private var commandList: some View {
-        List(specs) { spec in
+        List(Self.listed(specs)) { spec in
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: spec.title).font(.headline)
@@ -29,7 +29,7 @@ struct CommandsView: View {
                     .disabled(spec.interactive)  // Pitch: its own window (T8.7)
             }
         }
-        .overlay { if specs.isEmpty { ContentUnavailableView(error ?? "Aucune commande", systemImage: "bolt") } }
+        .overlay { if Self.listed(specs).isEmpty { ContentUnavailableView(error ?? "Aucune commande", systemImage: "bolt") } }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 if let error { Text(verbatim: error).font(.caption).foregroundStyle(.red) }
@@ -67,6 +67,12 @@ struct CommandsView: View {
         await load()  // choices (briefs, runs to promote) change after a launch
         return nil
     }
+
+    /// Runs ▸ Ménage… shows the list before « Appliquer »; the generic form would apply whatever proposal
+    /// comes first in the host's choices, one JT never saw (D24: the proposal is applied as it was shown).
+    private static let cleanupOnly: Set<String> = ["menage", "menage-appliquer"]
+
+    static func listed(_ specs: [CommandSpec]) -> [CommandSpec] { specs.filter { !cleanupOnly.contains($0.name) } }
 
     static func summary(_ launch: CommandLaunch) -> String {
         if let result = launch.result, !result.isEmpty {
