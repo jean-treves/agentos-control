@@ -23,6 +23,13 @@ human where they are, and the approve path must prove a human is actually there.
   and `approve` reaches it only after Touch ID. Late Touch ID answers, decisions taken elsewhere,
   our own decision echoed by the socket and polls racing a POST are all handled and unit-tested.
 - Touch ID also guards the kill switch (both ways) and the breaker reset. Deny needs none.
+- A run's detail can open two read-only terminals (Claude, Hermès) on the host's dialogue socket
+  (`/ws/runs/{id}/dialogue`). Lines are masked by the host before they are written; the app still strips
+  control characters, caps the buffer at 2 000 lines and shows every line as plain text. Scrolling up pauses
+  the follow, coming back to the end resumes it. Haiku's notes and the arbiter's decisions show as one line
+  in the run's timeline.
+- Runs ▸ Ménage… lists what Haiku proposes to tidy (worktrees and temp folders of finished runs); « Appliquer »
+  asks for Touch ID and the host applies the frozen list once (a second apply is refused).
 
 ## Build, test, install
 

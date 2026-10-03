@@ -4,6 +4,7 @@ struct RunsView: View {
     @Environment(ControlModel.self) private var model
     @State private var runs: [RunSummary] = []
     @State private var error: String?
+    @State private var cleaning = false
 
     var body: some View {
         NavigationStack {
@@ -11,6 +12,8 @@ struct RunsView: View {
                 NavigationLink(value: run.runId) { RunRow(run: run) }
             }
             .navigationDestination(for: String.self) { RunDetailView(runID: $0) }
+            .toolbar { Button("Ménage…") { cleaning = true } }
+            .sheet(isPresented: $cleaning) { CleanupSheet() }
             .overlay {
                 if runs.isEmpty {
                     ContentUnavailableView(error ?? "Aucun run", systemImage: "list.bullet.rectangle")

@@ -105,6 +105,20 @@ nonisolated struct EventData: Decodable, Sendable, Hashable {
     let approvalId: String?
     let approved: Bool?
     let isError: Bool?
+    // SP8 receipts (kernel/mailbox.py, kernel/minibots.py): arbiter, Haiku, briefs.
+    let decision: String?
+    let request: String?
+    let trigger: String?
+    let note: String?
+    let brief: String?
+    /// `haiku.summary`: JT's verdict on Haiku's summaries (F11); null until judged.
+    let validated: Bool?
+    /// `haiku.*`: whether the call answered, and why not.
+    let ok: Bool?
+    let error: String?
+    /// `brief.widened`: the draft brief that replaces the first one, and why.
+    let to: String?
+    let why: String?
 }
 
 /// `GET /api/tasks` row (kernel/tasks.py `Task`).

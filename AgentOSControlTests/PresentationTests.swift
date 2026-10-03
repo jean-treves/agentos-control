@@ -73,6 +73,54 @@ private func run(source: String?) -> RunSummary {
                           "approuvé par human:jean"])
     }
 
+    private func receipt(_ type: String, _ data: String) throws -> String {
+        let raw = #"{"seq":1,"ts":"t","type":"\#(type)","data":\#(data)}"#
+        return try JSONDecoder.host.decode(JournalEvent.self, from: Data(raw.utf8)).summary
+    }
+
+    @Test func harnessReceiptsReadAsOneLine() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let raw = #"{"seq":1,"ts":"t","type":"arbiter.decided","data":{"decision":"approve","request":"chmod 666 notes.txt","reason":"sert le brief"}}"#
+        #expect(try decoder.decode(JournalEvent.self, from: Data(raw.utf8)).summary
+                == "approve · chmod 666 notes.txt · sert le brief")
+        let note = #"{"seq":2,"ts":"t","type":"haiku.note","data":{"trigger":"verify rouge","note":"test_x échoue"}}"#
+        #expect(try decoder.decode(JournalEvent.self, from: Data(note.utf8)).summary == "verify rouge · test_x échoue")
+    }
+
+    /// Data keys as `kernel/mailbox.py` and `kernel/minibots.py` write them (arbiter: request_id, model, effort).
+    @Test func theArbitersRealReceiptIsOneLine() throws {
+        #expect(try receipt("arbiter.decided", #"{"request":"chmod 666 notes.txt","request_id":"r1","decision":"escalate","reason":"arbitre en échec (TimeoutError)","model":"claude-sonnet-5-5","effort":"medium"}"#)
+                == "escalate · chmod 666 notes.txt · arbitre en échec (TimeoutError)")
+    }
+
+    /// F11 / D45: a summary JT has not judged yet says so; `validated` is null until then.
+    @Test func haikuSummariesSayWhenJTHasNotValidatedThem() throws {
+        #expect(try receipt("haiku.summary", #"{"events":120,"validated":null,"ok":true,"error":null,"note":"2 outils, verify rouge"}"#)
+                == "non validé · 2 outils, verify rouge")
+        #expect(try receipt("haiku.summary", #"{"events":120,"validated":false,"ok":true,"error":null,"note":"x"}"#) == "non validé · x")
+        #expect(try receipt("haiku.summary", #"{"events":120,"validated":true,"ok":true,"error":null,"note":"2 outils"}"#)
+                == "2 outils")
+    }
+
+    /// `_ask` journals a failed call too, with an empty note: the line says Haiku did not answer.
+    @Test func aFailedHaikuCallIsNotAnEmptyNote() throws {
+        #expect(try receipt("haiku.note", #"{"trigger":"chien de garde : loop (3)","ok":false,"error":"TimeoutError: 90 s","note":""}"#)
+                == "chien de garde : loop (3) · Haiku sans réponse (TimeoutError: 90 s)")
+        #expect(try receipt("haiku.note", #"{"trigger":"verify rouge","ok":true,"error":null,"note":""}"#) == "verify rouge")
+    }
+
+    @Test func briefAndStopReceiptsNameWhatHappened() throws {
+        #expect(try receipt("brief.validated", #"{"brief":"2026-09-29-dm.md","sha256":"a","decider":"human:jean"}"#) == "2026-09-29-dm.md")
+        #expect(try receipt("brief.launched", #"{"brief":"2026-09-29-dm.md","sha256":"a"}"#) == "2026-09-29-dm.md")
+        // mailbox.py writes from / to / why, not `brief`.
+        #expect(try receipt("brief.widened", #"{"from":"a.md","to":"b.md","why":"écrit hors du mandat","decider":"human:jean"}"#)
+                == "b.md · écrit hors du mandat")
+        #expect(try receipt("supervisor.killed", #"{"reason":"loop (3)","tool_calls":9,"evidence":"ls"}"#) == "loop (3)")
+        #expect(try receipt("review.skipped", #"{"review_of":"r","reason":"quota Claude épuisé : verify seul"}"#)
+                == "quota Claude épuisé : verify seul")
+    }
+
     @Test(arguments: [
         ("paused", [TaskAction.resume, .cancel]),
         ("queued", [.pause, .cancel]),

@@ -82,4 +82,15 @@ import Testing
             #expect(titles.contains(item.title), "Wiki.md needs a « \(item.title) » topic")
         }
     }
+
+    /// The SP8 fiches name a command line and a folder: the Markdown rendering must not eat `<run>` or `_a-trier`.
+    @Test func dialogueAndCleanupFichesKeepTheirLiteralTokens() throws {
+        let topics = try WikiDocument.load(from: .main).flatMap(\.topics)
+        let shown = { (title: String) -> String in
+            String(WikiText.rendered(topics.first { $0.title == title }?.body ?? "").characters)
+        }
+        #expect(shown("Dialogue en direct").contains("agentos tail <run> --claude"))
+        #expect(shown("Ménage").contains("dans _a-trier."))
+        #expect(topics.map(\.title).contains("Arbitre") && topics.map(\.title).contains("Mini-bots Haiku"))
+    }
 }

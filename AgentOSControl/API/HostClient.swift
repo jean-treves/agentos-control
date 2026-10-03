@@ -62,6 +62,9 @@ actor HostClient {
     /// overrides the session's 5 s (measured 2026-09-25), so only this call waits longer.
     static let deepHealthTimeout: TimeInterval = 15
 
+    /// A command that waits for a Claude call (`menage`: Haiku, 90 s at most, plus the size of every candidate).
+    static let slowCommandTimeout: TimeInterval = 150
+
     /// Local host: fail fast, never cache responses on disk.
     static let urlSession: Transport = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -195,10 +198,13 @@ actor HostClient {
     }
 
     /// Runs a command of the catalogue (spec §15.2); `.refused` carries the host's reason for a 400.
-    func runCommand(_ name: String, params: [String: String]) async throws(HostError) -> CommandLaunch {
+    /// `timeout` nil keeps the session's 5 s.
+    func runCommand(
+        _ name: String, params: [String: String], timeout: TimeInterval? = nil
+    ) async throws(HostError) -> CommandLaunch {
         let body: Data
         do { body = try JSONEncoder().encode(["params": params]) } catch { throw .decoding("encodage de la commande") }
-        return try decode(CommandLaunch.self, try await send("/api/commands/\(name)", body: body))
+        return try decode(CommandLaunch.self, try await send("/api/commands/\(name)", body: body, timeout: timeout))
     }
 
     /// The host always stores a draft: a validated brief edited here needs a new validation.
@@ -230,7 +236,8 @@ actor HostClient {
     }
 
     private func send(
-        _ path: String, query: [String: String] = [:], body: Data? = nil, method: String = "POST"
+        _ path: String, query: [String: String] = [:], body: Data? = nil, method: String = "POST",
+        timeout: TimeInterval? = nil
     ) async throws(HostError) -> Data {
         let secret: String?
         do { secret = try await token() } catch {
@@ -239,6 +246,7 @@ actor HostClient {
         }
         guard let secret else { throw .tokenUnavailable }
         var request = makeRequest(method, path, query: query)
+        if let timeout { request.timeoutInterval = timeout }
         request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
         if let body {
             request.httpBody = body

@@ -75,3 +75,24 @@ d'attendre l'utilisateur : il peut s'arrêter là (fait F9).
 Chaque demande dit qui la pose : moteur, modèle de l'exécutant (« gemma via Hermès »), run, mode agentique, et
 « remontée par l'arbitre » avec sa raison. Hors mandat : Refuser (le run continue sans) ou Relancer avec ce mandat
 (le run s'arrête, un brief élargi attend ta validation).
+
+## Arbitre
+Sonnet 5.5, appelé seulement pour une demande « confirm » dans le mandat, en Accepter les diffs ou Auto. Il
+approuve, refuse ou te remonte la demande, jamais plus de 10 fois par run ; sans réponse en 120 s, ou sans
+quota, la demande vient à toi. Chaque décision est au journal (arbiter.decided), donc dans la frise du run.
+
+## Mini-bots Haiku
+Haiku 4.5 écrit une note de diagnostic quand le chien de garde arrête un run, quand verify échoue ou quand une
+demande attend ; il résume aussi le journal pour le relecteur. Cinq appels par run au plus. Il ne décide rien.
+Tant que tu n'as pas jugé ses résumés (fait F11), ils portent « non validé » et le relecteur lit aussi le journal brut.
+
+## Dialogue en direct
+Dans le détail d'un run : deux terminaux en lecture seule, Claude à gauche, Hermès à droite. Les secrets y sont
+masqués. Remonter suspend le défilement, redescendre en bas le reprend. Les mêmes lignes dans un vrai terminal :
+agentos tail <run> --claude (ou --hermes).
+
+## Ménage
+Runs ▸ Ménage… : Haiku commente la liste des worktrees et dossiers temporaires des runs finis, jamais ceux d'un run
+vivant ni en attente de promotion. Tu relis la liste, rien n'est touché. « Appliquer » (**Touch ID**) archive le diff
+de chaque worktree en patch dans le dossier du run, retire le worktree, et déplace le reste (fichiers ignorés,
+dossiers tmp) dans _a-trier. Aucune branche n'est supprimée. Une proposition ne s'applique qu'une fois.

@@ -55,9 +55,23 @@ extension JournalEvent {
             [data?.approved.map { $0 ? "approuvé" : "refusé" }.map { "\($0) par \(data?.decider ?? "?")" }]
         case "run.ended": [data?.status]
         case "budget.tripped": [data?.reason]
+        case "arbiter.decided": [data?.decision, data?.request, data?.reason]
+        case "haiku.note": [data?.trigger, data?.haikuText]
+        case "haiku.summary": [data?.validated == true ? nil : "non validé", data?.haikuText]  // F11, D45
+        case "brief.validated", "brief.launched": [data?.brief]
+        case "brief.widened": [data?.to, data?.why]
+        case "supervisor.killed", "review.skipped": [data?.reason]
         default: []
         }
-        return parts.compactMap { $0 }.joined(separator: " · ")
+        return parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
+extension EventData {
+    /// Haiku's note, or the fact that it did not answer: a failed call is journaled with an empty note.
+    nonisolated var haikuText: String? {
+        guard ok == false else { return note }
+        return "Haiku sans réponse" + (error.map { " (\($0))" } ?? "")
     }
 }
 
