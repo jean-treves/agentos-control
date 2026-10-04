@@ -11,6 +11,9 @@ struct ConversationView: View {
     @State private var creating = false
     @State private var error: String?
 
+    /// The list only moves when JT opens a conversation (refreshed at once) or a turn ends.
+    static let indexPollInterval = Duration.seconds(30)
+
     var body: some View {
         HSplitView {
             sidebar.frame(minWidth: 220, idealWidth: 260, maxWidth: 340)
@@ -32,7 +35,7 @@ struct ConversationView: View {
                 }
             }
         }
-        .task { await pollEvery(.seconds(10)) { await load() } }
+        .task { await pollEvery(Self.indexPollInterval) { await load() } }
     }
 
     private var sidebar: some View {
@@ -152,8 +155,8 @@ struct NewConversationSheet: View {
 }
 
 /// One conversation: the transcript (live, `/ws/conversations/{id}`), the delegation cards, the composer. The
-/// detail is polled every 3 s for `busy`, the quota and new cards; JT's card edits survive the polling until the
-/// host sends different cards.
+/// detail is polled for `busy`, the quota and new cards (3 s while a turn runs, 15 s otherwise); JT's card edits
+/// survive the polling until the host sends different cards.
 struct ConversationDetailView: View {
     let id: String
     let options: ConversationOptions
@@ -181,7 +184,12 @@ struct ConversationDetailView: View {
             }
         }
         .padding(8)
-        .task { await pollEvery(.seconds(3)) { await session.reload(using: model.client) } }
+        // Restarts (and reads at once) when a turn starts or ends: 3 s only while Sonnet answers.
+        .task(id: session.detail?.busy == true) {
+            await pollEvery(Self.pollInterval(busy: session.detail?.busy == true)) {
+                await session.reload(using: model.client)
+            }
+        }
         .task {
             let socket = DialogueSocket(url: DialogueSocket.conversationURL(for: model.client.baseURL, id: id),
                                         maxTextLength: DialogueLine.transcriptTextLength)
@@ -249,6 +257,9 @@ struct ConversationDetailView: View {
         if session.detail?.busy == true { return "Sonnet répond…" }
         return session.detail?.quota.state == "exhausted" ? "Quota épuisé" : "Envoyer"
     }
+
+    /// The detail is read every 3 s while a turn runs (the quota and new cards arrive with its end), else every 15 s.
+    static func pollInterval(busy: Bool) -> Duration { busy ? .seconds(3) : .seconds(15) }
 
     /// Nothing is sent while Sonnet answers or once the quota is spent (spec §17.13).
     static func canSend(_ detail: ConversationDetail?, draft: String) -> Bool {

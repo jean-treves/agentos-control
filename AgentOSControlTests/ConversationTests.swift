@@ -578,6 +578,14 @@ private actor StubHost {
         #expect(TranscriptLine.Kind(role: "jt ") == .note && TranscriptLine.Kind(role: "SONNET") == .note)
     }
 
+    /// Each read of the detail makes the host read its whole journal for the quota (review F4): fast only while a
+    /// turn runs, JT's own actions refresh at once (`send`, `delegate`, `promote` reload after the call).
+    @Test func theDetailIsPolledEveryThreeSecondsOnlyWhileATurnRuns() {
+        #expect(ConversationDetailView.pollInterval(busy: true) == .seconds(3))
+        #expect(ConversationDetailView.pollInterval(busy: false) == .seconds(15))
+        #expect(ConversationView.indexPollInterval == .seconds(30))
+    }
+
     @Test func anEmptyTranscriptSaysMessagesNotRunLines() {
         #expect(ConversationDetailView.emptyNote(.empty) == "aucun message")
         #expect(ConversationDetailView.emptyNote(.connecting) == "connexion…")
