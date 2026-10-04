@@ -14,6 +14,7 @@ nonisolated enum ApprovalOrigin {
     static func label(_ approval: Approval) -> String {
         let engine: String? = switch approval.originEngine {
         case "hermes-cli": approval.originModel.map { "\($0) via Hermès" } ?? "Hermès"
+        case "conversation": "Conversation avec Sonnet"
         case let other?: other
         case nil: nil
         }

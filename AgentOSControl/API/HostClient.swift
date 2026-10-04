@@ -34,6 +34,13 @@ nonisolated enum HostError: Error, Equatable, Sendable, LocalizedError {
         case .decoding(let detail): "Réponse illisible (\(detail))."
         }
     }
+
+    /// The message for a request that may have reached the host: when the answer never came back (a timeout,
+    /// a dropped connection) the host may have acted all the same, and JT must look before he tries again.
+    var descriptionAfterSend: String {
+        guard case .unreachable = self else { return localizedDescription }
+        return localizedDescription + " Le host a peut-être agi : vérifie Tâches et la conversation avant de recommencer."
+    }
 }
 
 /// Client of the host-v1 API (docs/api/host-v1.md). GETs are unauthenticated; control routes carry
@@ -159,6 +166,14 @@ actor HostClient {
         try await get(BriefDetail.self, "/api/briefs/\(name)")
     }
 
+    func conversations() async throws(HostError) -> ConversationIndex {
+        try await get(ConversationIndex.self, "/api/conversations")
+    }
+
+    func conversation(_ id: String) async throws(HostError) -> ConversationDetail {
+        try await get(ConversationDetail.self, "/api/conversations/\(id)")
+    }
+
     // MARK: Control (Bearer)
 
     func decide(approvalID: String, approve: Bool) async throws(HostError) {
@@ -222,6 +237,44 @@ actor HostClient {
             do { body = try JSONEncoder().encode(["sha256": shown]) } catch { throw .decoding("encodage du sceau") }
         }
         return try decode(BriefValidation.self, try await send("/api/briefs/\(name)/validate", body: body)).sha256
+    }
+
+    // The four calls below work on the host (a worktree, a turn, a merge, several launches): the slow-command
+    // timeout, else a 5 s cut-off reads « injoignable » over work that went through.
+
+    /// Project and mode are fixed for the conversation; the first message starts its session.
+    func openConversation(project: String, mode: String, effort: String,
+                          message: String) async throws(HostError) -> TurnStarted {
+        let body = try Self.encoded(["project": project, "mode": mode, "effort": effort, "message": message],
+                                    "de la conversation")
+        return try decode(TurnStarted.self, try await send("/api/conversations", body: body,
+                                                          timeout: Self.slowCommandTimeout))
+    }
+
+    func sendMessage(_ id: String, text: String) async throws(HostError) -> TurnStarted {
+        let body = try Self.encoded(["text": text], "du message")
+        return try decode(TurnStarted.self, try await send("/api/conversations/\(id)/messages", body: body,
+                                                          timeout: Self.slowCommandTimeout))
+    }
+
+    /// The cards as JT left them; the host checks every field again (kernel/delegation.py). It creates, seals
+    /// and launches each brief in this one call.
+    func delegate(_ id: String, cards: [DelegationCard]) async throws(HostError) -> DelegationReply {
+        let body = try Self.encoded(["cards": cards], "des cartes")
+        return try decode(DelegationReply.self, try await send("/api/conversations/\(id)/delegate", body: body,
+                                                              timeout: Self.slowCommandTimeout))
+    }
+
+    func promoteConversation(_ id: String) async throws(HostError) -> PromotionReply {
+        try decode(PromotionReply.self, try await send("/api/conversations/\(id)/promote",
+                                                       timeout: Self.slowCommandTimeout))
+    }
+
+    /// JSON in snake_case (`done_when`, `output_mode`), as the host reads it.
+    private static func encoded<T: Encodable>(_ value: T, _ what: String) throws(HostError) -> Data {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        do { return try encoder.encode(value) } catch { throw .decoding("encodage \(what)") }
     }
 
     // MARK: Plumbing

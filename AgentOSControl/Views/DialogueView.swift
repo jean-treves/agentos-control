@@ -59,18 +59,7 @@ struct DialogueTerminal: View {
                 .textSelection(.enabled)
                 .padding(4)
             }
-            .scrollPosition($position)
-            .onScrollGeometryChange(for: ScrollFollow.Metrics.self) { geometry in
-                ScrollFollow.Metrics(bottomEdge: geometry.visibleRect.maxY, viewport: geometry.containerSize.height,
-                                     content: geometry.contentSize.height)
-            } action: { old, new in
-                follow.scrolled(from: old, to: new)
-                // Driven by the layout, not by the data: a burst of lines (the backlog) is laid out after
-                // it arrived, and `scrollTo(edge:)` asked for the edge JT is already at moves nothing.
-                if follow.isFollowing, new.content - new.bottomEdge > ScrollFollow.slack {
-                    position.scrollTo(y: max(0, new.content - new.viewport))
-                }
-            }
+            .followsEnd($follow, position: $position)
             .background(Color(nsColor: .textBackgroundColor))
             .overlay {
                 if let note = buffer.note { Text(verbatim: note.text).font(.caption).foregroundStyle(.secondary) }
@@ -89,6 +78,25 @@ struct DialogueTerminal: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(buffer.copyText(), forType: .string)
         copied = true
+    }
+}
+
+extension View {
+    /// A scroll view that follows its end until JT scrolls up and resumes when he comes back to it
+    /// (`ScrollFollow`): a pane and a conversation's transcript share it.
+    func followsEnd(_ follow: Binding<ScrollFollow>, position: Binding<ScrollPosition>) -> some View {
+        scrollPosition(position)
+            .onScrollGeometryChange(for: ScrollFollow.Metrics.self) { geometry in
+                ScrollFollow.Metrics(bottomEdge: geometry.visibleRect.maxY, viewport: geometry.containerSize.height,
+                                     content: geometry.contentSize.height)
+            } action: { old, new in
+                follow.wrappedValue.scrolled(from: old, to: new)
+                // Driven by the layout, not by the data: a burst of lines (the backlog) is laid out after
+                // it arrived, and `scrollTo(edge:)` asked for the edge JT is already at moves nothing.
+                if follow.wrappedValue.isFollowing, new.content - new.bottomEdge > ScrollFollow.slack {
+                    position.wrappedValue.scrollTo(y: max(0, new.content - new.viewport))
+                }
+            }
     }
 }
 

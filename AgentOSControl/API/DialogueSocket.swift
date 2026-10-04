@@ -29,17 +29,20 @@ extension String {
 nonisolated struct DialogueLine: Decodable, Sendable, Hashable {
     /// The host cuts a line at 2 000 characters; twice that is already a runaway.
     static let maxTextLength = 4000
+    /// A conversation's reply is one line of up to 100 000 characters (`conversations.MAX_LINE_CHARS`) and
+    /// the transcript shows it whole.
+    static let transcriptTextLength = 100_000
     private static let maxRoleLength = 40
 
     let ts: String
     let role: String
     let text: String
 
-    init(ts: String, role: String, text: String) {
+    init(ts: String, role: String, text: String, maxTextLength: Int = DialogueLine.maxTextLength) {
         self.ts = ts.plainText()
         self.role = String(role.plainText().prefix(Self.maxRoleLength))
         let body = text.plainText(keepingLayout: true)
-        self.text = body.count > Self.maxTextLength ? String(body.prefix(Self.maxTextLength)) + "…" : body
+        self.text = body.count > maxTextLength ? String(body.prefix(maxTextLength)) + "…" : body
     }
 
     private enum CodingKeys: String, CodingKey { case ts, role, text }
@@ -66,8 +69,15 @@ nonisolated struct DialogueLine: Decodable, Sendable, Hashable {
     func header(in timeZone: TimeZone = .current) -> String { "\(clock(in: timeZone)) \(role) │" }
 
     /// nil for anything that is not a `{ts, role, text}` record (the host passes such a line through as is).
-    static func parse(_ raw: String) -> DialogueLine? {
-        try? JSONDecoder().decode(DialogueLine.self, from: Data(raw.utf8))
+    static func parse(_ raw: String, maxTextLength: Int = DialogueLine.maxTextLength) -> DialogueLine? {
+        guard let record = try? JSONDecoder().decode(Record.self, from: Data(raw.utf8)) else { return nil }
+        return DialogueLine(ts: record.ts, role: record.role, text: record.text, maxTextLength: maxTextLength)
+    }
+
+    private struct Record: Decodable {
+        let ts: String
+        let role: String
+        let text: String
     }
 }
 
@@ -150,10 +160,25 @@ extension DialogueBuffer {
 /// none): steering goes through Approbations.
 nonisolated final class DialogueSocket: Sendable {
     let url: URL
+    let maxTextLength: Int
     private let logger = Logger(subsystem: "com.jeantreves.agentoscontrol", category: "dialogue")
 
     init(baseURL: URL, runID: String, pane: DialoguePane) {
         url = Self.socketURL(for: baseURL, runID: runID, pane: pane)
+        maxTextLength = DialogueLine.maxTextLength
+    }
+
+    init(url: URL, maxTextLength: Int = DialogueLine.maxTextLength) {
+        self.url = url
+        self.maxTextLength = maxTextLength
+    }
+
+    /// `/ws/conversations/{id}` (T8.5c): a conversation's transcript, the same lines as a run's pane.
+    static func conversationURL(for baseURL: URL, id: String) -> URL {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+        components.scheme = components.scheme == "https" ? "wss" : "ws"
+        components.path = "/ws/conversations/\(id)"
+        return components.url!
     }
 
     static func socketURL(for baseURL: URL, runID: String, pane: DialoguePane) -> URL {
@@ -189,7 +214,8 @@ nonisolated final class DialogueSocket: Sendable {
             var answered = false
             do {
                 while true {
-                    guard case .string(let text) = try await socket.receive(), let line = DialogueLine.parse(text)
+                    guard case .string(let text) = try await socket.receive(),
+                          let line = DialogueLine.parse(text, maxTextLength: maxTextLength)
                     else { continue }
                     if !answered {
                         answered = true

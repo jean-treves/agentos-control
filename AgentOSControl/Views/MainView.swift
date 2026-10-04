@@ -27,6 +27,7 @@ struct MainView: View {
     @ViewBuilder private func detail(_ item: SidebarItem) -> some View {
         switch item {
         case .overview: OverviewView()
+        case .conversation: ConversationView()
         case .commands: CommandsView()
         case .approvals: ApprovalsView()
         case .runs: RunsView()
@@ -41,13 +42,14 @@ struct MainView: View {
 
 /// Sidebar sections, in display order.
 enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
-    case overview, commands, approvals, runs, tasks, memory, storage, jobs, wiki
+    case overview, conversation, commands, approvals, runs, tasks, memory, storage, jobs, wiki
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .overview: "Aperçu"
+        case .conversation: "Conversation"
         case .commands: "Commandes"
         case .approvals: "Approbations"
         case .runs: "Runs"
@@ -62,6 +64,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
     var symbol: String {
         switch self {
         case .overview: "gauge.with.dots.needle.33percent"
+        case .conversation: "bubble.left.and.bubble.right"
         case .commands: "bolt"
         case .approvals: "hand.raised"
         case .runs: "list.bullet.rectangle"

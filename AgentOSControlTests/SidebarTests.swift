@@ -5,7 +5,7 @@ import Testing
 
 @Suite struct SidebarTests {
     @Test func sectionsInTheOrderOfSpec16() {
-        #expect(SidebarItem.allCases.map(\.title) == ["Aperçu", "Commandes", "Approbations", "Runs", "Tâches", "Mémoire", "Stockage", "Veille emploi", "Wiki"])
+        #expect(SidebarItem.allCases.map(\.title) == ["Aperçu", "Conversation", "Commandes", "Approbations", "Runs", "Tâches", "Mémoire", "Stockage", "Veille emploi", "Wiki"])
         #expect(Set(SidebarItem.allCases.map(\.symbol)).count == SidebarItem.allCases.count)
     }
 

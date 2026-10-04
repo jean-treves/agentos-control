@@ -4,6 +4,17 @@
 L'état en un coup d'œil : host, arrêt d'urgence, disjoncteur, approbations en attente, offres du jour.
 Dessous : les agents actifs et les contrôles de santé, dont la RAM des résidents.
 
+## Conversation
+Ton chat avec Sonnet 5.5 sur un projet, par ton abonnement Claude. À l'ouverture, tu choisis le projet et le mode :
+Lecture + délégation (Sonnet lit le projet, le vault et la mémoire, n'écrit rien) ou Lecture, modification +
+délégation (Sonnet écrit dans un worktree créé pour la conversation, chaque demande d'autorisation vient dans
+Approbations, et Promouvoir, avec **Touch ID**, fait entrer le diff dans le projet). Quand vous êtes d'accord,
+Sonnet propose des cartes : tu les ajustes, puis Déléguer ouvre une relecture qui montre chaque carte en entier
+(titre, projet, vérification, mode de sortie, mode agentique, modèle, effort). Confirmer (**Touch ID**) crée, valide
+et lance tous les briefs d'un coup ; seuls Diagnostic et Essai + PR se délèguent. Chaque message consomme ton quota
+Claude : au-delà de 85 % la section prévient ; quota épuisé, rien n'est envoyé, la conversation reste lisible et ses
+cartes restent délégables.
+
 ## Commandes
 Les boutons d'AgentOS : Optimisation, Passover, Promouvoir, Market-Maker, Pitch, Drawback, Ménage. Chaque
 lancement demande **Touch ID** ; le suivi est dans Runs. Dessous, les briefs en attente, écrits par /passover dans
@@ -73,7 +84,8 @@ d'attendre l'utilisateur : il peut s'arrêter là (fait F9).
 
 ## Origine d'une demande
 Chaque demande dit qui la pose : moteur, modèle de l'exécutant (« gemma via Hermès »), run, mode agentique, et
-« remontée par l'arbitre » avec sa raison. Hors mandat : Refuser (le run continue sans) ou Relancer avec ce mandat
+« remontée par l'arbitre » avec sa raison. Une demande posée pendant une conversation en modification porte
+« Conversation avec Sonnet ». Hors mandat : Refuser (le run continue sans) ou Relancer avec ce mandat
 (le run s'arrête, un brief élargi attend ta validation).
 
 ## Arbitre

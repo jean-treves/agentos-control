@@ -227,6 +227,44 @@ final class ControlModel {
         }
     }
 
+    /// The delegation of a conversation's cards (spec §17.13, D34): one host call creates, seals and launches
+    /// every brief. Nothing leaves without the review (`DelegationFlow` shows each card in full first); here a
+    /// card the host would refuse (`yolo`) stops before Touch ID, and the prompt names how many briefs start.
+    /// nil when JT did not confirm, a card is refused here or the host refused it (see `failureReason`).
+    func delegate(_ id: String, cards raw: [DelegationCard]) async -> DelegationReply? {
+        lastError = nil  // a refused Touch ID must not show an older error
+        let cards = raw.map { $0.cleaned() }  // what leaves is what the screen shows: plain text
+        let blockers = DelegationReview.blockers(for: cards)
+        guard blockers.isEmpty else {
+            lastError = blockers.joined(separator: " ")
+            return nil
+        }
+        guard await presence.verify(DelegationReview.touchIDReason(count: cards.count)) else { return nil }
+        do {
+            let reply = try await client.delegate(id, cards: cards)
+            lastError = nil
+            return reply
+        } catch {
+            report(error, afterSend: true)
+            return nil
+        }
+    }
+
+    /// Touch ID, then the merge of the conversation's worktree (D36); nil when JT did not confirm or the host
+    /// refused it.
+    func promoteConversation(_ id: String) async -> PromotionReply? {
+        lastError = nil
+        guard await presence.verify("promouvoir les changements de la conversation") else { return nil }
+        do {
+            let reply = try await client.promoteConversation(id)
+            lastError = nil
+            return reply
+        } catch {
+            report(error, afterSend: true)
+            return nil
+        }
+    }
+
     /// Touch ID, then the /optimize scan in the background; the sentence shown to JT.
     func startScan() async -> String {
         await launch("lancer l'analyse du stockage", label: "Analyse") { () async throws(HostError) in
@@ -325,8 +363,9 @@ final class ControlModel {
         return events
     }
 
-    private func report(_ error: HostError) {
-        lastError = error.localizedDescription
+    /// `afterSend`: the request left, so an answer that never came back does not prove the host did nothing.
+    private func report(_ error: HostError, afterSend: Bool = false) {
+        lastError = afterSend ? error.descriptionAfterSend : error.localizedDescription
         logger.error("\(error.localizedDescription, privacy: .public)")
     }
 }
