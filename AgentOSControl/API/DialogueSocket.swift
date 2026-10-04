@@ -24,6 +24,45 @@ extension String {
     }
 }
 
+extension String {
+    /// `kernel/dialogue.clean` without its secret masking (the host masks before it seals): control, bidi,
+    /// separator and invisible characters become one space per run (any other format character, one each), then
+    /// the text is trimmed; a one-line text also folds every whitespace run into a single space. A card JT edits
+    /// is shown with exactly this, so the review is the sealed brief.
+    nonisolated func hostCleaned(oneLine: Bool) -> String {
+        var spaced = String.UnicodeScalarView()
+        var inRun = false
+        for scalar in unicodeScalars {
+            if Self.isInvisibleOrControl(scalar) {
+                if !inRun { spaced.append(" ") }
+                inRun = true
+            } else {
+                inRun = false
+                spaced.append(scalar.properties.generalCategory == .format ? " " : scalar)
+            }
+        }
+        let isSpace: (Unicode.Scalar) -> Bool = { $0.properties.isWhitespace }
+        if oneLine {
+            return spaced.split(whereSeparator: isSpace).map { String(String.UnicodeScalarView($0)) }
+                .joined(separator: " ")
+        }
+        guard let start = spaced.firstIndex(where: { !isSpace($0) }),
+              let end = spaced.lastIndex(where: { !isSpace($0) }) else { return "" }
+        return String(spaced[start...end])
+    }
+
+    /// `dialogue._STRICT`: C0 (not tab and new line), DEL, C1, no-break space, bidi marks and overrides, zero-width
+    /// characters, line and paragraph separators, invisible operators, variation selectors, BOM, tag characters.
+    private nonisolated static func isInvisibleOrControl(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x00...0x08, 0x0B...0x1F, 0x7F...0xA0, 0x061C, 0x200B...0x200F, 0x2028, 0x2029, 0x202A...0x202E,
+             0x2060...0x2064, 0x2066...0x2069, 0xFE00...0xFE0F, 0xFEFF, 0xE0000...0xE007F, 0xE0100...0xE01EF:
+            true
+        default: false
+        }
+    }
+}
+
 /// One line of `runs/<id>/<pane>.jsonl` (kernel/dialogue.py), as `/ws/runs/{id}/dialogue` sends it.
 /// Everything in it is untrusted text: it is cleaned on the way in and shown as plain `Text`.
 nonisolated struct DialogueLine: Decodable, Sendable, Hashable {

@@ -345,9 +345,58 @@ private actor StubHost {
         #expect(fields["Projet"] == "quant/x" && fields["Vérification"] == "uv run pytest [31m -q")
         #expect(fields["Mode de sortie"] == "Essai + PR (pr)" && fields["Mode agentique"] == "Accepter les diffs (accept_diffs)")
         #expect(fields["Modèle de l'exécutant"] == "auto:smart" && fields["Effort de Sonnet"] == "medium")
-        #expect(fields["Objectif"] == "Ligne 1\nLigne 2 " && fields["Contexte"] == "contexte")
+        #expect(fields["Objectif"] == "Ligne 1\nLigne 2" && fields["Contexte"] == "contexte")  // trimmed, as the host does
         #expect(fields["Critère de fin"] == "pytest vert")
         #expect(review.entries[1].fields.first { $0.label == "Mode de sortie" }?.value == "Diagnostic (diagnostic)")
+    }
+
+    /// Review F5: « Déléguer » seals what `kernel/delegation.card` makes of the card (`dialogue.clean`: invisible
+    /// characters and whitespace runs). What JT reads is that text, byte for byte. Expected values: the host's own
+    /// `clean` (sp8-dev d546f23) run on the same inputs.
+    @Test func aCardIsReviewedExactlyAsTheHostSealsIt() {
+        let cases: [(raw: String, oneLine: Bool, sealed: String)] = [
+            ("grep -c 'TODO:  ' notes.md", true, "grep -c 'TODO: ' notes.md"),
+            ("Test  DM", true, "Test DM"),
+            ("a  b\t c\n d", true, "a b c d"),
+            ("  lead and trail  ", false, "lead and trail"),
+            ("\n\n goal \n line2 \n\n", false, "goal \n line2"),
+            ("a\tb", false, "a\tb"),
+            ("x\u{200B}y", true, "x y"), ("x\u{200B}\u{200B}y", false, "x y"),  // a run of invisible characters is one space
+            ("x \u{200B} y", false, "x   y"), ("x \u{200B} y", true, "x y"),
+            ("a\u{00A0}b", false, "a b"), ("a\u{3000}b\u{2003}c", true, "a b c"), ("a\u{3000}b\u{2003}c", false, "a\u{3000}b\u{2003}c"),
+            ("tag\u{E0041}x", true, "tag x"), ("v\u{FE0F}s", false, "v s"), ("a\u{00AD}b", false, "a b"),
+            ("a\u{200D}\u{200D}b\u{FE0F}\u{FE0F}c", false, "a b c"),
+            ("a\r\nb", false, "a \nb"), ("a\u{0B}b\u{0C}c", false, "a b c"), ("a\u{2028}b", false, "a b"),
+            ("a\u{202E}b", true, "a b"), ("\u{200B} lead", false, "lead"),
+            ("e\u{0301}  x", true, "e\u{0301} x"), ("emoji \u{1F600} ok", false, "emoji \u{1F600} ok"),
+        ]
+        for (raw, oneLine, sealed) in cases {
+            #expect(raw.hostCleaned(oneLine: oneLine) == sealed, "\(raw.debugDescription) one line: \(oneLine)")
+            #expect(sealed.hostCleaned(oneLine: oneLine) == sealed)  // the app cleans twice (review, then send)
+        }
+    }
+
+    @MainActor @Test func theCardJTReviewsIsTheCardTheHostGets() async throws {
+        var edited = Self.card
+        edited.title = "Test  DM"
+        edited.verify = "grep -c 'TODO:  ' notes.md"
+        edited.goal = "  Ajouter le test.\n\nSans toucher le reste.  \n"
+        let review = DelegationReview(cards: [edited], cardsSeq: 1, options: Self.options)
+        #expect(review.cards[0].verify == "grep -c 'TODO: ' notes.md" && review.cards[0].title == "Test DM")
+        #expect(review.entries[0].heading == "Brief 1/1 : Test DM")
+        #expect(review.entries[0].fields.first { $0.label == "Vérification" }?.value == "grep -c 'TODO: ' notes.md")
+        #expect(review.entries[0].fields.first { $0.label == "Objectif" }?.value == "Ajouter le test.\n\nSans toucher le reste.")
+        // What leaves is what was shown.
+        let model = Self.model(recorder, body: #"{"delegated":[]}"#)
+        _ = await model.delegate("c1", cards: review.cards, cardsSeq: 1)
+        _ = await model.delegate("c1", cards: [edited], cardsSeq: 1)  // even from the raw cards
+        let sent = await recorder.requests.compactMap { request -> [String: String]? in
+            let body = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            return (body?["cards"] as? [[String: String]])?.first
+        }
+        #expect(sent.count == 2 && sent.first == sent.last)
+        #expect(sent.first?["verify"] == "grep -c 'TODO: ' notes.md")
+        #expect(sent.first?["goal"] == "Ajouter le test.\n\nSans toucher le reste.")
     }
 
     @Test func aYoloCardIsShownProminentlyAndBlocksTheReview() {

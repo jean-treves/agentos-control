@@ -1,14 +1,16 @@
 import SwiftUI
 
 extension DelegationCard {
-    /// The card as the screen and the host see it: no control, bidi or separator character anywhere. The
-    /// review freezes this copy, so what JT reads is exactly what is sent.
+    /// The card as the host seals it (`kernel/delegation.card`): the review freezes this copy, so what JT reads is
+    /// what the brief says, byte for byte. Title, project, verify and the choices are one line, the three texts
+    /// keep their lines.
     nonisolated func cleaned() -> DelegationCard {
         DelegationCard(
-            title: title.plainText(), project: project.plainText(), goal: goal.plainText(keepingLayout: true),
-            context: context.plainText(keepingLayout: true), doneWhen: doneWhen.plainText(keepingLayout: true),
-            verify: verify.plainText(), outputMode: outputMode.plainText(), agenticMode: agenticMode.plainText(),
-            executorModel: executorModel.plainText(), sonnetEffort: sonnetEffort.plainText())
+            title: title.hostCleaned(oneLine: true), project: project.hostCleaned(oneLine: true),
+            goal: goal.hostCleaned(oneLine: false), context: context.hostCleaned(oneLine: false),
+            doneWhen: doneWhen.hostCleaned(oneLine: false), verify: verify.hostCleaned(oneLine: true),
+            outputMode: outputMode.hostCleaned(oneLine: true), agenticMode: agenticMode.hostCleaned(oneLine: true),
+            executorModel: executorModel.hostCleaned(oneLine: true), sonnetEffort: sonnetEffort.hostCleaned(oneLine: true))
     }
 }
 
