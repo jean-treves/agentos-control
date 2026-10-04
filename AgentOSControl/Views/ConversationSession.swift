@@ -56,14 +56,20 @@ final class ConversationSession {
 
     /// Shows the cards in full; sends nothing.
     func beginReview(options: ConversationOptions) {
-        flow.begin(cards: edits.cards, options: options)
+        flow.begin(cards: edits.cards, cardsSeq: detail?.cardsSeq, options: options)
     }
 
-    /// Polls the detail. JT's edits survive until the host sends different cards.
-    func reload(using client: HostClient) async {
+    /// Polls the detail. JT's edits survive until the host sends different cards (another content or another
+    /// `cards_seq`: the same cards again are new cards). `adopting`: the host's cards replace the editor's whatever
+    /// they are, after a delegation the host answered.
+    func reload(using client: HostClient, adopting: Bool = false) async {
         do {
             let fresh = try await client.conversation(id)
-            if fresh.cards != detail?.cards { edits.replace(with: fresh.cards) }
+            let changed = fresh.cards != detail?.cards || fresh.cardsSeq != detail?.cardsSeq
+            if changed || adopting { edits.replace(with: fresh.cards) }
+            if changed, flow.closeIfStale(cardsSeq: fresh.cardsSeq) {
+                note = "Sonnet a envoyé de nouvelles cartes : relis-les avant de déléguer."
+            }
             detail = fresh
             loadError = nil
         } catch {
@@ -74,7 +80,8 @@ final class ConversationSession {
     /// Runs when JT confirms the review: Touch ID, the one host call, then what the host says.
     func delegate(using model: ControlModel) async {
         await flow.confirm(id, using: model)
-        if let reply = flow.reply {
+        let answered = flow.reply
+        if let reply = answered {
             edits.replace(with: [])  // the host cleared them; a second delegation would be a duplicate
             note = "Délégué : " + reply.delegated
                 .map { "\($0.brief) (tâche \($0.taskIds.joined(separator: ", ")))" }
@@ -82,6 +89,7 @@ final class ConversationSession {
         } else if let problem = flow.problem {
             note = problem
         }
-        await reload(using: model.client)
+        // After an answer the host's cards are the truth: it cleared the delegated ones and kept any that came since.
+        await reload(using: model.client, adopting: answered != nil)
     }
 }

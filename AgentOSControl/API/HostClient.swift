@@ -258,11 +258,17 @@ actor HostClient {
     }
 
     /// The cards as JT left them; the host checks every field again (kernel/delegation.py). It creates, seals
-    /// and launches each brief in this one call.
-    func delegate(_ id: String, cards: [DelegationCard]) async throws(HostError) -> DelegationReply {
-        let body = try Self.encoded(["cards": cards], "des cartes")
+    /// and launches each brief in this one call. `cardsSeq`: the number of the cards JT read; the host then
+    /// keeps the cards that arrived since instead of clearing them unseen.
+    func delegate(_ id: String, cards: [DelegationCard], cardsSeq: Int?) async throws(HostError) -> DelegationReply {
+        let body = try Self.encoded(DelegateBody(cards: cards, cardsSeq: cardsSeq), "des cartes")
         return try decode(DelegationReply.self, try await send("/api/conversations/\(id)/delegate", body: body,
                                                               timeout: Self.slowCommandTimeout))
+    }
+
+    private struct DelegateBody: Encodable {
+        let cards: [DelegationCard]
+        let cardsSeq: Int?
     }
 
     func promoteConversation(_ id: String) async throws(HostError) -> PromotionReply {

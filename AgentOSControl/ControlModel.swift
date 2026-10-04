@@ -231,7 +231,7 @@ final class ControlModel {
     /// every brief. Nothing leaves without the review (`DelegationFlow` shows each card in full first); here a
     /// card the host would refuse (`yolo`) stops before Touch ID, and the prompt names how many briefs start.
     /// nil when JT did not confirm, a card is refused here or the host refused it (see `failureReason`).
-    func delegate(_ id: String, cards raw: [DelegationCard]) async -> DelegationReply? {
+    func delegate(_ id: String, cards raw: [DelegationCard], cardsSeq: Int?) async -> DelegationReply? {
         lastError = nil  // a refused Touch ID must not show an older error
         let cards = raw.map { $0.cleaned() }  // what leaves is what the screen shows: plain text
         let blockers = DelegationReview.blockers(for: cards)
@@ -241,7 +241,7 @@ final class ControlModel {
         }
         guard await presence.verify(DelegationReview.touchIDReason(count: cards.count)) else { return nil }
         do {
-            let reply = try await client.delegate(id, cards: cards)
+            let reply = try await client.delegate(id, cards: cards, cardsSeq: cardsSeq)
             lastError = nil
             return reply
         } catch {

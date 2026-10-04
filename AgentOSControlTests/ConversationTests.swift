@@ -17,11 +17,14 @@ private nonisolated let delegatedReply = #"{"delegated":[{"brief":"b.md","sha256
 private actor StubHost {
     private(set) var requests: [URLRequest] = []
     private var detail: String
+    private let delegateStatus: Int
     private let delegateReply: String
     private let detailAfterDelegation: String?
 
-    init(detail: String, delegateReply: String = delegatedReply, detailAfterDelegation: String? = nil) {
+    init(detail: String, delegateStatus: Int = 200, delegateReply: String = delegatedReply,
+         detailAfterDelegation: String? = nil) {
         self.detail = detail
+        self.delegateStatus = delegateStatus
         self.delegateReply = delegateReply
         self.detailAfterDelegation = detailAfterDelegation
     }
@@ -31,11 +34,13 @@ private actor StubHost {
     func answer(_ request: URLRequest) -> (Data, URLResponse) {
         requests.append(request)
         var body = detail
+        var status = 200
         if request.httpMethod == "POST", request.url?.path().hasSuffix("/delegate") == true {
             body = delegateReply
+            status = delegateStatus
             if let after = detailAfterDelegation { detail = after }
         }
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         return (Data(body.utf8), response)
     }
 
@@ -128,7 +133,7 @@ private actor StubHost {
         #expect(detail.busy && detail.mode == "modify" && detail.worktree?.hasSuffix("/0f0e0d0c") == true)
         #expect(detail.cards.first?.doneWhen == "pytest vert" && detail.cards.first?.executorModel == "auto:smart")
         #expect(detail.cards.first?.goal == "Ajouter le test.\nSans toucher le reste.")
-        #expect(detail.cardsError == "carte 2 : le brief n'a pas de verify:")
+        #expect(detail.cardsError == "carte 2 : le brief n'a pas de verify:" && detail.cardsSeq == 2)
         #expect(detail.quota.state == "ok" && detail.quota.fiveHourResetsAt == nil)
         #expect(await recorder.requests.first?.url?.path() == "/api/conversations/c1")
     }
@@ -183,7 +188,7 @@ private actor StubHost {
 
     @Test func delegationSendsTheEditedCardsInSnakeCase() async throws {
         let reply = #"{"delegated":[{"brief":"2026-09-30-test-dm.md","sha256":"sha256:ab","task_ids":["t_1"],"run_ids":[]}]}"#
-        let delegated = try await makeClient(body: reply, recorder: recorder).delegate("c1", cards: [Self.card])
+        let delegated = try await makeClient(body: reply, recorder: recorder).delegate("c1", cards: [Self.card], cardsSeq: nil)
         #expect(delegated.delegated.first?.taskIds == ["t_1"])
         let request = try #require(await recorder.requests.first)
         #expect(request.url?.path() == "/api/conversations/c1/delegate")
@@ -192,9 +197,21 @@ private actor StubHost {
         #expect(body?["cards"]?.first?["agentic_mode"] == "accept_diffs")
     }
 
+    /// The host clears what it was shown: cards a later reply brought carry another number and stay (review F2).
+    @Test func delegationEchoesTheNumberOfTheCardsThatWereReviewed() async throws {
+        let client = makeClient(body: #"{"delegated":[]}"#, recorder: recorder)
+        _ = try await client.delegate("c1", cards: [Self.card], cardsSeq: 3)
+        _ = try await client.delegate("c1", cards: [Self.card], cardsSeq: nil)
+        let bodies = await recorder.requests.compactMap {
+            $0.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        }
+        #expect(bodies.count == 2 && bodies[0]["cards_seq"] as? Int == 3)
+        #expect(bodies[1]["cards_seq"] == nil)  // a host that sent none is not told one
+    }
+
     /// A card never widens a mandate: exactly the host's ten fields leave the app (kernel/delegation.FIELDS).
     @Test func aCardCarriesExactlyTheHostsFields() async throws {
-        _ = try? await makeClient(body: #"{"delegated":[]}"#, recorder: recorder).delegate("c1", cards: [Self.card])
+        _ = try? await makeClient(body: #"{"delegated":[]}"#, recorder: recorder).delegate("c1", cards: [Self.card], cardsSeq: nil)
         let request = try #require(await recorder.requests.first)
         let body = try JSONSerialization.jsonObject(with: try #require(request.httpBody)) as? [String: [[String: String]]]
         #expect(Set(body?["cards"]?.first?.keys.map { $0 } ?? [])
@@ -217,7 +234,7 @@ private actor StubHost {
         let client = makeClient(body: #"{"id":"c1","turn_id":"t","delegated":[],"branch":"b","head":"h"}"#, recorder: recorder)
         _ = try await client.openConversation(project: "quant/x", mode: "read", effort: "medium", message: "a")
         _ = try await client.sendMessage("c1", text: "b")
-        _ = try await client.delegate("c1", cards: [Self.card])
+        _ = try await client.delegate("c1", cards: [Self.card], cardsSeq: nil)
         _ = try await client.promoteConversation("c1")
         let timeouts = await recorder.requests.map(\.timeoutInterval)
         #expect(timeouts == Array(repeating: HostClient.slowCommandTimeout, count: 4))
@@ -227,7 +244,7 @@ private actor StubHost {
         let client = makeClient(status: 400, body: #"{"detail":"carte 1 : le brief n'a pas de verify:"}"#,
                                 recorder: recorder)
         await #expect(throws: HostError.refused("carte 1 : le brief n'a pas de verify:")) {
-            try await client.delegate("c1", cards: [Self.card])
+            try await client.delegate("c1", cards: [Self.card], cardsSeq: nil)
         }
     }
 
@@ -236,7 +253,7 @@ private actor StubHost {
     @MainActor @Test func delegationAndPromotionWithoutPresenceSendNothing() async {
         let model = ControlModel(client: makeClient(recorder: recorder),
                                  presence: HumanPresence { _ in false }, notifier: nil, socket: nil)
-        #expect(await model.delegate("c1", cards: [Self.card]) == nil)
+        #expect(await model.delegate("c1", cards: [Self.card], cardsSeq: nil) == nil)
         #expect(await model.promoteConversation("c1") == nil)
         #expect(await recorder.requests.isEmpty)
     }
@@ -244,7 +261,7 @@ private actor StubHost {
     @MainActor @Test func theTouchIDPromptNamesTheNumberOfBriefs() async {
         let prompts = Prompts()
         let model = Self.model(recorder, body: #"{"delegated":[]}"#, presence: HumanPresence { await prompts.ask($0); return true })
-        _ = await model.delegate("c1", cards: [Self.card("A"), Self.card("B")])
+        _ = await model.delegate("c1", cards: [Self.card("A"), Self.card("B")], cardsSeq: nil)
         #expect(await prompts.reasons == ["lancer 2 brief(s) délégué(s)"])
         #expect(DelegationReview.touchIDReason(count: 1) == "lancer 1 brief(s) délégué(s)")
     }
@@ -253,9 +270,9 @@ private actor StubHost {
     @MainActor @Test func aYoloCardIsRefusedBeforeTouchIDAndNothingIsSent() async {
         let prompts = Prompts()
         let model = Self.model(recorder, presence: HumanPresence { await prompts.ask($0); return true })
-        #expect(await model.delegate("c1", cards: [Self.card("A"), Self.card("B", outputMode: "yolo")]) == nil)
-        #expect(await model.delegate("c1", cards: [Self.card("C", outputMode: "rm -rf")]) == nil)
-        #expect(await model.delegate("c1", cards: []) == nil)
+        #expect(await model.delegate("c1", cards: [Self.card("A"), Self.card("B", outputMode: "yolo")], cardsSeq: nil) == nil)
+        #expect(await model.delegate("c1", cards: [Self.card("C", outputMode: "rm -rf")], cardsSeq: nil) == nil)
+        #expect(await model.delegate("c1", cards: [], cardsSeq: nil) == nil)
         let reasons = await prompts.reasons
         #expect(await recorder.requests.isEmpty && reasons.isEmpty)
         #expect(DelegationReview.blockers(for: [Self.card("A"), Self.card("B", outputMode: "yolo")])
@@ -267,7 +284,7 @@ private actor StubHost {
         let client = HostClient(baseURL: URL(string: "http://127.0.0.1:3107")!, token: { "t" },
                                 transport: { _ in throw URLError(.timedOut) })
         let model = ControlModel(client: client, presence: HumanPresence { _ in true }, notifier: nil, socket: nil)
-        #expect(await model.delegate("c1", cards: [Self.card]) == nil)
+        #expect(await model.delegate("c1", cards: [Self.card], cardsSeq: nil) == nil)
         #expect(model.lastError?.contains("Host injoignable") == true)
         #expect(model.lastError?.contains("vérifie Tâches") == true)
     }
@@ -279,7 +296,7 @@ private actor StubHost {
         hostile.verify = "uv run pytest\u{1B}[31m -q"
         hostile.goal = "Ligne 1\nLigne 2\u{07}"
         hostile.context = "contexte"
-        let review = DelegationReview(cards: [hostile, Self.card("Second", outputMode: "diagnostic")], options: Self.options)
+        let review = DelegationReview(cards: [hostile, Self.card("Second", outputMode: "diagnostic")], cardsSeq: nil, options: Self.options)
         #expect(review.entries.count == 2 && review.entries[0].heading == "Brief 1/2 : Test evil")
         let fields = Dictionary(uniqueKeysWithValues: review.entries[0].fields.map { ($0.label, $0.value) })
         #expect(fields["Projet"] == "quant/x" && fields["Vérification"] == "uv run pytest [31m -q")
@@ -291,20 +308,20 @@ private actor StubHost {
     }
 
     @Test func aYoloCardIsShownProminentlyAndBlocksTheReview() {
-        let review = DelegationReview(cards: [Self.card("A"), Self.card("B", outputMode: "yolo")], options: Self.options)
+        let review = DelegationReview(cards: [Self.card("A"), Self.card("B", outputMode: "yolo")], cardsSeq: nil, options: Self.options)
         #expect(!review.blockers.isEmpty)
         #expect(review.entries[1].fields.first { $0.label == "Mode de sortie" }?.isAlert == true)
         #expect(review.entries[1].heading.hasSuffix("(refusé)"))
         #expect(review.entries[0].fields.allSatisfy { !$0.isAlert })
         // A label the host did not send is the raw value, never blank.
-        let unknown = DelegationReview(cards: [Self.card("A", outputMode: "autre")], options: Self.options)
+        let unknown = DelegationReview(cards: [Self.card("A", outputMode: "autre")], cardsSeq: nil, options: Self.options)
         #expect(unknown.entries[0].fields.first { $0.label == "Mode de sortie" }?.value == "autre")
     }
 
     @Test func anEmptyVerifyIsSaidInTheReview() {
         var card = Self.card
         card.verify = ""
-        let field = DelegationReview(cards: [card], options: Self.options).entries[0].fields.first { $0.label == "Vérification" }
+        let field = DelegationReview(cards: [card], cardsSeq: nil, options: Self.options).entries[0].fields.first { $0.label == "Vérification" }
         #expect(field?.isAlert == true && field?.value.contains("vide") == true)
     }
 
@@ -312,7 +329,7 @@ private actor StubHost {
         let flow = DelegationFlow()
         await flow.confirm("c1", using: Self.model(recorder))  // no review shown yet
         #expect(await recorder.requests.isEmpty)
-        flow.begin(cards: [Self.card], options: Self.options)
+        flow.begin(cards: [Self.card], cardsSeq: nil, options: Self.options)
         #expect(flow.review?.entries.count == 1)
         #expect(await recorder.requests.isEmpty)  // showing the cards sends nothing
         flow.cancel()
@@ -329,7 +346,7 @@ private actor StubHost {
         }
         let model = Self.model(recorder, body: #"{"delegated":[{"brief":"b.md","sha256":"s","task_ids":["t_1"],"run_ids":[]}]}"#,
                                presence: slowTouchID)
-        flow.begin(cards: [Self.card("A"), Self.card("B")], options: Self.options)
+        flow.begin(cards: [Self.card("A"), Self.card("B")], cardsSeq: nil, options: Self.options)
         async let first: Void = flow.confirm("c1", using: model)
         async let second: Void = flow.confirm("c1", using: model)
         _ = await (first, second)
@@ -339,12 +356,22 @@ private actor StubHost {
         #expect(await recorder.requests.count == 1)
     }
 
+    @MainActor @Test func theReviewFreezesTheNumberOfItsCardsAndTheHostGetsIt() async {
+        let flow = DelegationFlow()
+        flow.begin(cards: [Self.card], cardsSeq: 3, options: Self.options)
+        #expect(flow.review?.cardsSeq == 3)
+        let host = StubHost(detail: Self.detailJSON(cards: ["A"], seq: 4))  // the poll moved on; the review did not
+        let model = ControlModel(client: host.client, presence: HumanPresence { _ in true }, notifier: nil, socket: nil)
+        await flow.confirm("c1", using: model)
+        #expect(await host.delegations().map(\.seq) == [3])
+    }
+
     @MainActor @Test func theHostsRefusalIsShownAndTheCardsStayEditable() async {
         let flow = DelegationFlow()
         let model = ControlModel(client: makeClient(status: 400, body: #"{"detail":"carte 1 : le brief n'a pas de verify:"}"#,
                                                     recorder: recorder),
                                  presence: HumanPresence { _ in true }, notifier: nil, socket: nil)
-        flow.begin(cards: [Self.card], options: Self.options)
+        flow.begin(cards: [Self.card], cardsSeq: nil, options: Self.options)
         await flow.confirm("c1", using: model)
         #expect(flow.reply == nil && flow.review == nil)
         #expect(flow.problem == "Refusé par le host : carte 1 : le brief n'a pas de verify:")
@@ -352,7 +379,7 @@ private actor StubHost {
 
     @MainActor @Test func aRefusedTouchIDLeavesTheReviewOpen() async {
         let flow = DelegationFlow()
-        flow.begin(cards: [Self.card], options: Self.options)
+        flow.begin(cards: [Self.card], cardsSeq: nil, options: Self.options)
         await flow.confirm("c1", using: Self.model(recorder, presence: HumanPresence { _ in false }))
         #expect(flow.review != nil && flow.problem == ControlModel.notConfirmed)
         #expect(await recorder.requests.isEmpty)
@@ -412,6 +439,56 @@ private actor StubHost {
         #expect(sent?.map { $0["verify"] } == ["uv run pytest -q", "v"])  // what JT edited is what left
     }
 
+    // MARK: Cards that change under a review (review T8.5c-b F2)
+
+    @MainActor @Test func cardsThatArriveWhileTheyAreReviewedCloseTheReviewAndNothingIsSent() async {
+        let (session, host) = await Self.session(showing: ["A"], seq: 1)
+        session.beginReview(options: Self.options)
+        #expect(session.flow.review?.cardsSeq == 1)
+        await host.show(Self.detailJSON(cards: ["A"], seq: 2))  // turn 2 brought the same card again: another number
+        await session.reload(using: host.client)
+        #expect(session.flow.review == nil && session.note?.contains("nouvelles cartes") == true)
+        #expect(session.detail?.cardsSeq == 2 && session.edits.cards.map(\.title) == ["A"])
+        #expect(await host.delegations().isEmpty)
+        await host.show(Self.detailJSON(cards: ["A"], seq: 2, busy: true))  // a poll that changes nothing leaves a review alone
+        session.beginReview(options: Self.options)
+        await session.reload(using: host.client)
+        #expect(session.flow.review?.cardsSeq == 2)
+    }
+
+    /// The review is being confirmed (Touch ID) when turn 2's cards arrive: what was reviewed is sent, with its
+    /// number, the host keeps the new cards, and the editor shows them rather than staying empty.
+    @MainActor @Test func theCardsTheHostKeptComeBackAfterADelegation() async {
+        let host = StubHost(detail: Self.detailJSON(cards: ["A"], seq: 1),
+                            detailAfterDelegation: Self.detailJSON(cards: ["B"], seq: 2))
+        let session = ConversationSession(id: "c1")
+        await session.reload(using: host.client)
+        session.beginReview(options: Self.options)
+        let touchID = HumanPresence { _ in
+            await host.show(Self.detailJSON(cards: ["B"], seq: 2))  // the poll sees turn 2 while JT is at Touch ID
+            await session.reload(using: host.client)
+            return true
+        }
+        await session.delegate(using: ControlModel(client: host.client, presence: touchID, notifier: nil, socket: nil))
+        #expect(await host.delegations().map(\.seq) == [1])
+        #expect(await host.delegations().first?.cards.map { $0["title"] } == ["A"])
+        #expect(session.edits.cards.map(\.title) == ["B"] && session.flow.review == nil)
+        #expect(session.note == "Délégué : b.md (tâche t_1)")
+    }
+
+    @MainActor @Test func aRefusedDelegationKeepsWhatJTEdited() async {
+        let host = StubHost(detail: Self.detailJSON(cards: ["A"], seq: 1), delegateStatus: 400,
+                            delegateReply: #"{"detail":"carte 1 : le brief n'a pas de verify:"}"#)
+        let session = ConversationSession(id: "c1")
+        await session.reload(using: host.client)
+        session.binding(for: session.edits.items[0].id).wrappedValue.goal = "mon objectif"
+        session.beginReview(options: Self.options)
+        await session.delegate(using: ControlModel(client: host.client, presence: HumanPresence { _ in true },
+                                                   notifier: nil, socket: nil))
+        #expect(session.edits.cards.map(\.goal) == ["mon objectif"])  // the host did not clear them
+        #expect(session.note == "Refusé par le host : carte 1 : le brief n'a pas de verify:")
+    }
+
     // MARK: Composer, transcript, origin
 
     @Test func nothingIsSentWhileSonnetAnswersOrOnceTheQuotaIsSpent() {
@@ -419,7 +496,7 @@ private actor StubHost {
             ConversationDetail(id: "c1", title: "t", project: "quant/x", mode: "read", turns: 1, busy: busy,
                                worktree: nil, quota: QuotaInfo(fiveHourUtilization: 0.5, fiveHourResetsAt: nil,
                                                                state: state),
-                               cards: [], cardsError: nil)
+                               cards: [], cardsError: nil, cardsSeq: nil)
         }
         #expect(ConversationDetailView.canSend(detail(busy: false, state: "ok"), draft: "encore"))
         #expect(!ConversationDetailView.canSend(detail(busy: false, state: "ok"), draft: "  "))

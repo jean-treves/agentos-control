@@ -71,6 +71,9 @@ nonisolated struct ConversationDetail: Decodable, Sendable, Hashable, Identifiab
     let quota: QuotaInfo
     let cards: [DelegationCard]
     let cardsError: String?
+    /// +1 each time a reply brings new cards (`Conversation.cards_seq`): « Déléguer » sends the number of the cards
+    /// JT read, so the host clears those and keeps any that arrived since. nil from a host that sends none.
+    let cardsSeq: Int?
 }
 
 /// One task Sonnet proposes (the `agentos-delegation` block); JT edits it before « Déléguer ».

@@ -32,10 +32,13 @@ nonisolated struct DelegationReview: Equatable, Sendable {
 
     /// The cleaned cards: the only ones that can be sent from this review.
     let cards: [DelegationCard]
+    /// The number of the cards at the moment they were shown (`ConversationDetail.cardsSeq`), sent back with them.
+    let cardsSeq: Int?
     let entries: [Entry]
 
-    init(cards: [DelegationCard], options: ConversationOptions) {
+    init(cards: [DelegationCard], cardsSeq: Int?, options: ConversationOptions) {
         self.cards = cards.map { $0.cleaned() }
+        self.cardsSeq = cardsSeq
         entries = self.cards.enumerated().map { index, card in
             Self.entry(card, number: index + 1, of: cards.count, options: options)
         }
@@ -95,17 +98,26 @@ final class DelegationFlow {
     /// Why the last step did nothing (Touch ID not confirmed, the host's refusal, an answer that never came).
     private(set) var problem: String?
 
-    /// Shows the cards; sends nothing.
-    func begin(cards: [DelegationCard], options: ConversationOptions) {
+    /// Shows the cards; sends nothing. `cardsSeq`: the number of these cards, kept for the one host call.
+    func begin(cards: [DelegationCard], cardsSeq: Int?, options: ConversationOptions) {
         guard !sending else { return }
         reply = nil
         problem = nil
-        review = DelegationReview(cards: cards, options: options)
+        review = DelegationReview(cards: cards, cardsSeq: cardsSeq, options: options)
     }
 
     func cancel() {
         guard !sending else { return }
         review = nil
+    }
+
+    /// Closes a review whose cards are no longer the host's (another number): confirming it would delegate
+    /// what JT read, but the screen behind has moved on. Never while the call is in flight. True when closed.
+    @discardableResult
+    func closeIfStale(cardsSeq: Int?) -> Bool {
+        guard let review, !sending, review.cardsSeq != cardsSeq else { return false }
+        self.review = nil
+        return true
     }
 
     /// Touch ID, then the reviewed cards. A second click while the first is in flight does nothing, and the review
@@ -117,7 +129,7 @@ final class DelegationFlow {
         sending = true
         defer { sending = false }
         problem = nil
-        if let sent = await model.delegate(id, cards: review.cards) {
+        if let sent = await model.delegate(id, cards: review.cards, cardsSeq: review.cardsSeq) {
             reply = sent
         } else if model.lastError == nil {
             problem = ControlModel.notConfirmed
