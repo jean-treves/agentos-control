@@ -3,6 +3,8 @@ import SwiftUI
 import Testing
 @testable import AgentOSControl
 
+private let utc = TimeZone(identifier: "UTC")!
+
 /// F6: a pane line is a header (clock, role) and a body. A tool printed the body, so it can hold a new line
 /// followed by something that looks like a header: it must stay a continuation of the body.
 @MainActor @Suite struct DialogueRowTests {
@@ -10,8 +12,9 @@ import Testing
 
     @Test func theHeaderCarriesTheClockAndTheRoleOnly() {
         let line = DialogueLine(ts: "2026-10-03T12:00:03+00:00", role: "hermes", text: Self.forged)
-        #expect(line.header == "12:00:03 hermes │")
-        #expect(!line.header.contains("\n") && !line.text.hasPrefix(line.header))
+        let header = line.header(in: utc)
+        #expect(header == "12:00:03 hermes │")
+        #expect(!header.contains("\n") && !line.text.hasPrefix(header))
     }
 
     /// Ink of the rendered row: opacity per pixel, row 0 on top.

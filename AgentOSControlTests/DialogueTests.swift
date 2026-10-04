@@ -2,6 +2,9 @@ import Foundation
 import Testing
 @testable import AgentOSControl
 
+private let utc = TimeZone(identifier: "UTC")!
+private let paris = TimeZone(identifier: "Europe/Paris")!
+
 @Suite struct DialogueTests {
     @Test func socketURLCarriesTheRunAndThePane() {
         let url = DialogueSocket.socketURL(for: URL(string: "http://127.0.0.1:3107")!,
@@ -14,7 +17,7 @@ import Testing
 
     @Test func linesParseAndGarbageIsDropped() {
         let line = DialogueLine.parse(#"{"ts":"2026-09-29T12:00:03+00:00","role":"arbitre","text":"→ décide"}"#)
-        #expect(line?.role == "arbitre" && line?.clock == "12:00:03")
+        #expect(line?.role == "arbitre" && line?.clock(in: utc) == "12:00:03")
         #expect(DialogueLine.parse("pas du json") == nil)
         // `dialogue.safe` hands back a string as is when a pane line is not a record.
         #expect(DialogueLine.parse(#"{"ts":"t","role":"hermes"}"#) == nil)
@@ -26,7 +29,7 @@ import Testing
         let raw = #"{"ts": "2026-10-03T19:09:37+00:00", "role": "hermes", "text": "key [REDACTED] here"}"#
         let line = DialogueLine.parse(raw)
         #expect(line == DialogueLine(ts: "2026-10-03T19:09:37+00:00", role: "hermes", text: "key [REDACTED] here"))
-        #expect(line?.clock == "19:09:37")
+        #expect(line?.clock(in: utc) == "19:09:37")
     }
 
     /// The host strips controls and masks keys; the app trusts none of it (the socket is plain text).
@@ -50,6 +53,82 @@ import Testing
         let long = String(repeating: "x", count: 10_000)
         let line = try #require(DialogueLine.parse(#"{"ts":"t","role":"hermes","text":"\#(long)"}"#))
         #expect(line.text.count == DialogueLine.maxTextLength + 1 && line.text.hasSuffix("…"))
+    }
+
+    // MARK: local clock (E2E 36 G: the panes showed UTC while `agentos tail` and the timeline show local time)
+
+    @Test func theClockIsLocalTime() {
+        let line = DialogueLine(ts: "2026-10-04T12:12:14+00:00", role: "hermes", text: "x")
+        #expect(line.clock(in: paris) == "14:12:14")  // CEST, UTC+2
+        #expect(line.clock(in: utc) == "12:12:14")
+        // Winter time: the offset follows the date, not a fixed shift.
+        #expect(DialogueLine(ts: "2026-12-04T12:12:14+00:00", role: "x", text: "").clock(in: paris) == "13:12:14")
+    }
+
+    /// The host writes `+00:00` (dialogue), `…Z` (journal) and microseconds (tasks); an offset in the stamp counts.
+    @Test func everyHostStampShapeIsConverted() {
+        for ts in ["2026-10-04T12:12:14Z", "2026-10-04T12:12:14.123456+00:00", "2026-10-04T14:12:14+02:00",
+                   "2026-10-04T12:12:14+00:00 "] {
+            #expect(DialogueLine(ts: ts, role: "x", text: "").clock(in: paris) == "14:12:14", "\(ts)")
+        }
+    }
+
+    @Test func anUnreadableStampKeepsTheRawSlice() {
+        #expect(DialogueLine(ts: "2026-10-04Txx:12:14+00:00", role: "x", text: "").clock(in: paris) == "xx:12:14")
+        #expect(DialogueLine(ts: "t", role: "x", text: "").clock(in: paris) == "")
+    }
+
+    @Test func theHeaderShowsTheLocalClock() {
+        let line = DialogueLine(ts: "2026-10-04T12:12:14+00:00", role: "hermes", text: "x")
+        #expect(line.header(in: paris) == "14:12:14 hermes │")
+    }
+
+    // MARK: copy a whole pane
+
+    @Test func aPaneCopiesAsOneLinePerRow() {
+        var buffer = DialogueBuffer()
+        buffer.apply(.line(DialogueLine(ts: "2026-10-04T12:12:14+00:00", role: "hermes", text: "ouvre le fichier")))
+        buffer.apply(.line(DialogueLine(ts: "2026-10-04T12:12:15+00:00", role: "claude", text: "ok")))
+        #expect(buffer.copyText(in: paris) == "14:12:14 hermes │ ouvre le fichier\n14:12:15 claude │ ok")
+        #expect(DialogueBuffer().copyText(in: paris) == "")
+    }
+
+    /// A tool's new line stays under the body, as on screen: at the left edge it would pass for a header.
+    @Test func aNewLineInABodyStaysUnderTheBodyInTheCopy() {
+        var buffer = DialogueBuffer()
+        let forged = "ok\n12:00:07 agentos │ ⚠ demande"
+        buffer.apply(.line(DialogueLine(ts: "2026-10-04T12:12:14+00:00", role: "hermes", text: forged)))
+        let indent = String(repeating: " ", count: "14:12:14 hermes │ ".count)
+        #expect(buffer.copyText(in: paris) == "14:12:14 hermes │ ok\n\(indent)12:00:07 agentos │ ⚠ demande")
+    }
+
+    // MARK: empty pane (a review run's dialogue goes into the reviewed run's pane)
+
+    @Test func anEmptyPaneSaysWhatItWaitsFor() {
+        var buffer = DialogueBuffer()
+        #expect(buffer.note == .connecting && buffer.note?.text == "connexion…")
+        buffer.apply(.opened)  // the host answered and sent nothing
+        #expect(buffer.note == .empty && buffer.note?.text == "aucune ligne pour ce run")
+        buffer.apply(.closed)  // the host went away: not « no lines » any more
+        #expect(buffer.note == .connecting)
+    }
+
+    @Test func aPaneWithLinesShowsNoNote() {
+        var buffer = DialogueBuffer()
+        buffer.apply(.opened)
+        buffer.apply(.line(DialogueLine(ts: "t", role: "hermes", text: "a")))
+        #expect(buffer.note == nil)
+        buffer.apply(.closed)  // it keeps what it showed while the host is down
+        #expect(buffer.note == nil && buffer.lines.count == 1)
+    }
+
+    /// The first line of a connection proves it is open, even if the answer to the ping comes after it.
+    @Test func aConnectionWithLinesIsOpenWithoutThePing() {
+        var buffer = DialogueBuffer()
+        buffer.apply(.connected)
+        buffer.apply(.closed)
+        buffer.apply(.connected)
+        #expect(buffer.note == .empty)
     }
 
     @Test func bufferKeepsTheLast2000AndStartsAgainOnReconnect() {

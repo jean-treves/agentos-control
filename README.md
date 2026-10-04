@@ -26,7 +26,9 @@ human where they are, and the approve path must prove a human is actually there.
 - A run's detail can open two read-only terminals (Claude, Hermès) on the host's dialogue socket
   (`/ws/runs/{id}/dialogue`). Lines are masked by the host before they are written; the app still strips
   control characters, caps the buffer at 2 000 lines and shows every line as plain text. Scrolling up pauses
-  the follow, coming back to the end resumes it. Haiku's notes and the arbiter's decisions show as one line
+  the follow, coming back to the end resumes it. Clocks are this Mac's local time (the host stamps UTC);
+  « Copier » puts the whole pane on the pasteboard as plain text; an empty pane says « connexion… » or
+  « aucune ligne pour ce run ». The run header counts the run's journal events. Haiku's notes and the arbiter's decisions show as one line
   in the run's timeline.
 - Runs ▸ Ménage… lists what Haiku proposes to tidy (worktrees and temp folders of finished runs, and how many
   are kept on purpose); « Appliquer » asks for Touch ID and the host applies the frozen list once (a second apply

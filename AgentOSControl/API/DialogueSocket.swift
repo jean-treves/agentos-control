@@ -51,10 +51,19 @@ nonisolated struct DialogueLine: Decodable, Sendable, Hashable {
                   text: try container.decode(String.self, forKey: .text))
     }
 
-    /// `HH:MM:SS` of the ISO timestamp.
-    var clock: String { String(ts.dropFirst(11).prefix(8)) }
+    /// `HH:mm:ss` of the ISO timestamp in `timeZone` (default: this Mac's), as `agentos tail` and the run
+    /// timeline show it: the host stamps UTC. A stamp that does not parse keeps its raw `HH:MM:SS` slice.
+    func clock(in timeZone: TimeZone = .current) -> String {
+        guard let date = parseTimestamp(ts.trimmingCharacters(in: .whitespaces)) else {
+            return String(ts.dropFirst(11).prefix(8))
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let time = calendar.dateComponents([.hour, .minute, .second], from: date)
+        return String(format: "%02d:%02d:%02d", time.hour ?? 0, time.minute ?? 0, time.second ?? 0)
+    }
 
-    var header: String { "\(clock) \(role) │" }
+    func header(in timeZone: TimeZone = .current) -> String { "\(clock(in: timeZone)) \(role) │" }
 
     /// nil for anything that is not a `{ts, role, text}` record (the host passes such a line through as is).
     static func parse(_ raw: String) -> DialogueLine? {
@@ -69,7 +78,16 @@ nonisolated enum DialoguePane: String, CaseIterable, Sendable {
 
 nonisolated enum DialogueEvent: Equatable, Sendable {
     case connected  // the host resends its backlog: the view starts again
+    case opened  // the host answered a ping: the connection is open, lines or not
+    case closed
     case line(DialogueLine)
+}
+
+/// What an empty pane says in place of lines.
+nonisolated enum PaneNote: Equatable, Sendable {
+    case connecting, empty
+
+    var text: String { self == .connecting ? "connexion…" : "aucune ligne pour ce run" }
 }
 
 /// The last 2 000 lines of one pane.
@@ -85,6 +103,12 @@ nonisolated struct DialogueBuffer: Equatable, Sendable {
     private(set) var lines: [DialogueLine] = []
     /// Lines that fell off the top since the last reset.
     private var dropped = 0
+    /// A connection to the host is open now. A pane keeps its lines while the host is down, this flag does not.
+    private(set) var isOpen = false
+
+    /// Why an empty pane is empty: still connecting (or the host is down), or connected and nothing was written
+    /// (a review run's dialogue goes into the reviewed run's pane). nil once there are lines to show.
+    var note: PaneNote? { lines.isEmpty ? (isOpen ? .empty : .connecting) : nil }
 
     var numbered: [Numbered] { lines.enumerated().map { Numbered(id: dropped + $0.offset, line: $0.element) } }
 
@@ -93,6 +117,9 @@ nonisolated struct DialogueBuffer: Equatable, Sendable {
         case .connected:
             lines.removeAll()
             dropped = 0
+            isOpen = true
+        case .opened: isOpen = true
+        case .closed: isOpen = false
         case .line(let line):
             lines.append(line)
             if lines.count > Self.limit {
@@ -104,10 +131,23 @@ nonisolated struct DialogueBuffer: Equatable, Sendable {
     }
 }
 
+extension DialogueBuffer {
+    /// The whole pane as plain text for the pasteboard, one line per row: `clock role │ text`. A new line
+    /// inside a body stays under the body, as on screen: at the left edge it would pass for a header.
+    func copyText(in timeZone: TimeZone = .current) -> String {
+        lines.map { line in
+            let header = line.header(in: timeZone)
+            let continuation = "\n" + String(repeating: " ", count: header.count + 1)
+            return header + " " + line.text.replacingOccurrences(of: "\n", with: continuation)
+        }.joined(separator: "\n")
+    }
+}
+
 /// Read-only listener on `/ws/runs/{id}/dialogue?pane=…` (spec §17.7); reconnects every 2 s.
 ///
 /// No `Origin` header: a `URLSessionWebSocketTask` sends none, and the host only refuses a foreign one
-/// (`server/auth.foreign_origin`). Nothing is ever sent to the host: steering goes through Approbations.
+/// (`server/auth.foreign_origin`). No data is ever sent to the host (only a ping, a control frame that carries
+/// none): steering goes through Approbations.
 nonisolated final class DialogueSocket: Sendable {
     let url: URL
     private let logger = Logger(subsystem: "com.jeantreves.agentoscontrol", category: "dialogue")
@@ -142,6 +182,9 @@ nonisolated final class DialogueSocket: Sendable {
     private func receiveUntilClosed(_ continuation: AsyncStream<DialogueEvent>.Continuation) async {
         let socket = URLSession.shared.webSocketTask(with: url)
         socket.resume()
+        // A pane with no line sends nothing, so waiting for a line cannot tell « connected, nothing yet »
+        // from « host down »: the pong says the connection is open.
+        socket.sendPing { error in if error == nil { continuation.yield(.opened) } }
         await withTaskCancellationHandler {
             var answered = false
             do {
@@ -157,6 +200,7 @@ nonisolated final class DialogueSocket: Sendable {
             } catch {
                 logger.info("dialogue closed: \(error.localizedDescription, privacy: .public)")
             }
+            continuation.yield(.closed)
         } onCancel: {
             socket.cancel(with: .goingAway, reason: nil)
         }

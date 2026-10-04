@@ -38,6 +38,7 @@ struct DialogueTerminal: View {
     let buffer: DialogueBuffer
     @State private var follow = ScrollFollow()
     @State private var position = ScrollPosition()
+    @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -45,6 +46,9 @@ struct DialogueTerminal: View {
                 Text(verbatim: title).font(.headline)
                 Spacer()
                 Text(verbatim: follow.isFollowing ? "suivi" : "suivi suspendu").font(.caption).foregroundStyle(.secondary)
+                Button(copied ? "Copié" : "Copier", action: copy)
+                    .controlSize(.small).disabled(buffer.lines.isEmpty)
+                    .help("Copie tout le volet en texte brut")
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
@@ -68,9 +72,23 @@ struct DialogueTerminal: View {
                 }
             }
             .background(Color(nsColor: .textBackgroundColor))
+            .overlay {
+                if let note = buffer.note { Text(verbatim: note.text).font(.caption).foregroundStyle(.secondary) }
+            }
         }
         .padding(6)
         .frame(minWidth: 240)
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            copied = false
+        }
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(buffer.copyText(), forType: .string)
+        copied = true
     }
 }
 
@@ -83,7 +101,7 @@ struct DialogueRow: View {
     var body: some View {
         // Plain `Text(verbatim:)`: a line is whatever a tool printed, never Markdown or a link.
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(verbatim: line.header).fixedSize()
+            Text(verbatim: line.header()).fixedSize()
             Text(verbatim: line.text).frame(maxWidth: .infinity, alignment: .leading)
         }
         .font(.system(.caption, design: .monospaced))

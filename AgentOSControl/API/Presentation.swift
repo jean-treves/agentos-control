@@ -7,6 +7,7 @@ nonisolated struct RunActivity: Equatable, Sendable {
     private(set) var lastTool: String?
     private(set) var toolCalls = 0
     private(set) var lastSeq = 0
+    private(set) var journalEvents = 0
 
     /// `policy.yaml › budgets.max_tool_calls`. host-v1 does not expose the policy, so a change
     /// there must be mirrored here (ponytail: add the budget to a host route if it ever moves).
@@ -16,6 +17,7 @@ nonisolated struct RunActivity: Equatable, Sendable {
         var next = self
         for event in events where event.seq > next.lastSeq {
             next.lastSeq = event.seq
+            next.journalEvents += 1
             next.engine = next.engine ?? event.engine
             // One `tool.requested` per tool call: the count the budget tracker compares.
             if event.type == "tool.requested" {
@@ -40,6 +42,16 @@ extension RunDetail {
     nonisolated var asSummary: RunSummary {
         RunSummary(runId: runId, prompt: prompt, source: source, status: status, createdAt: createdAt,
                    updatedAt: updatedAt)
+    }
+}
+
+extension RunDetail {
+    /// The run detail's header. It counts the run's journal events, not `events`: that stream (`run_events`)
+    /// has been written by no production code since the T1.11 server split, so it is empty for every
+    /// governed run (hermes-cli included) and the header used to read « 0 événements » next to a full journal.
+    nonisolated func statusLine(activity: RunActivity) -> String {
+        let count = activity.journalEvents
+        return "\(status) · \(source ?? "?") · \(activity.engine ?? "moteur ?") · journal : \(count) événement\(count > 1 ? "s" : "")"
     }
 }
 

@@ -5,7 +5,6 @@ struct RunDetailView: View {
     let runID: String
     @Environment(ControlModel.self) private var model
     @State private var detail: RunDetail?
-    @State private var streamEvents = 0
     @State private var journal: [JournalEvent] = []
     @State private var activity = RunActivity()
     @State private var limit = RunActivity.defaultMaxToolCalls
@@ -16,7 +15,7 @@ struct RunDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             if let detail {
                 Text(detail.prompt ?? "").font(.headline).lineLimit(3).textSelection(.enabled)
-                Text("\(detail.status) · \(detail.source ?? "?") · \(activity.engine ?? "moteur ?") · flux : \(streamEvents) événements")
+                Text(verbatim: detail.statusLine(activity: activity))
                     .font(.caption).foregroundStyle(.secondary)
                 Gauge(value: Double(min(activity.toolCalls, limit)), in: 0...Double(max(limit, 1))) {
                     Text("Appels d'outils")
@@ -53,12 +52,9 @@ struct RunDetailView: View {
 
     /// Polls every 2 s while the run is running, and for `RunDetail.lateReceipts` after it ended.
     private func follow() async {
-        var runSeq = 0
         while !Task.isCancelled {
             do {
-                let fresh = try await model.client.run(id: runID, after: runSeq)
-                runSeq = fresh.events.last?.seq ?? runSeq
-                streamEvents += fresh.events.count
+                let fresh = try await model.client.run(id: runID, after: 0)
                 if detail == nil, fresh.asSummary.taskId != nil {
                     limit = RunActivity.toolCallLimit(for: fresh.asSummary, tasks: try await model.client.tasks())
                 }

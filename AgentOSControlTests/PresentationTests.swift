@@ -53,6 +53,26 @@ private func run(source: String?) -> RunSummary {
         #expect(once.folding(all) == once)
     }
 
+    /// `run_events` (what the header counted as « flux ») is never written for a governed run: the count
+    /// is the journal's, every event of the run once (the health and run.started lines included).
+    @Test func countsEveryJournalEventOnce() throws {
+        let all = try events()
+        let once = RunActivity().folding(all)
+        #expect(once.journalEvents == 6)
+        #expect(RunActivity().folding(Array(all.prefix(2))).folding(Array(all.dropFirst(1))).journalEvents == 6)
+        #expect(once.folding(all).journalEvents == 6)
+        #expect(RunActivity().journalEvents == 0)
+    }
+
+    @Test func theHeaderLineCountsJournalEventsNotTheEmptyStream() throws {
+        let detail = RunDetail(runId: "r", prompt: "p", source: "task:t_0a1b2c3d4e", status: "running", output: nil,
+                               createdAt: 1_790_000_000, updatedAt: nil, events: [])
+        let activity = RunActivity().folding(try events())
+        #expect(detail.statusLine(activity: activity) == "running · task:t_0a1b2c3d4e · claude · journal : 6 événements")
+        #expect(detail.statusLine(activity: RunActivity()) == "running · task:t_0a1b2c3d4e · moteur ? · journal : 0 événement")
+        #expect(detail.statusLine(activity: RunActivity().folding([try events()[0]])).hasSuffix("journal : 1 événement"))
+    }
+
     @Test func toolCallLimitPrefersTheTaskBudget() throws {
         let tasks = try JSONDecoder.host.decode(TaskPage.self, from: Data(Fixture.tasks.utf8)).tasks
         #expect(RunActivity.toolCallLimit(for: run(source: "task:t_0a1b2c3d4e"), tasks: tasks) == 3)
