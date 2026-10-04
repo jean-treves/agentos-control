@@ -165,7 +165,6 @@ struct ConversationDetailView: View {
     @State private var buffer = DialogueBuffer()
     @State private var draft = ""
     @State private var sending = false
-    @State private var promoting = false
 
     init(id: String, options: ConversationOptions) {
         self.id = id
@@ -209,8 +208,8 @@ struct ConversationDetailView: View {
                 }
                 Spacer()
                 if detail.mode == "modify" {
-                    Button("Promouvoir (Touch ID)") { Task { await promote() } }
-                        .disabled(detail.busy || promoting)
+                    Button("Promouvoir (Touch ID)") { Task { await session.promote(using: model) } }
+                        .disabled(detail.busy || session.promoting)
                 }
             }
         } else if let loadError = session.loadError {
@@ -282,18 +281,6 @@ struct ConversationDetailView: View {
             session.note = nil
         } catch {
             session.note = error.descriptionAfterSend
-        }
-        await session.reload(using: model.client)
-    }
-
-    private func promote() async {
-        guard !promoting else { return }
-        promoting = true
-        defer { promoting = false }
-        if let reply = await model.promoteConversation(id) {
-            session.note = "Promu dans \(reply.branch) (\(reply.head))"
-        } else {
-            session.note = model.failureReason
         }
         await session.reload(using: model.client)
     }

@@ -19,13 +19,15 @@ private actor StubHost {
     private var detail: String
     private let delegateStatus: Int
     private let delegateReply: String
+    private let promoteReply: String
     private let detailAfterDelegation: String?
 
     init(detail: String, delegateStatus: Int = 200, delegateReply: String = delegatedReply,
-         detailAfterDelegation: String? = nil) {
+         promoteReply: String = #"{"branch":"work","head":"abc1234"}"#, detailAfterDelegation: String? = nil) {
         self.detail = detail
         self.delegateStatus = delegateStatus
         self.delegateReply = delegateReply
+        self.promoteReply = promoteReply
         self.detailAfterDelegation = detailAfterDelegation
     }
 
@@ -39,6 +41,8 @@ private actor StubHost {
             body = delegateReply
             status = delegateStatus
             if let after = detailAfterDelegation { detail = after }
+        } else if request.httpMethod == "POST", request.url?.path().hasSuffix("/promote") == true {
+            body = promoteReply
         }
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         return (Data(body.utf8), response)
@@ -297,7 +301,7 @@ private actor StubHost {
         let model = ControlModel(client: makeClient(recorder: recorder),
                                  presence: HumanPresence { _ in false }, notifier: nil, socket: nil)
         #expect(await model.delegate("c1", cards: [Self.card], cardsSeq: nil) == nil)
-        #expect(await model.promoteConversation("c1") == nil)
+        #expect(await model.promoteConversation("c1", project: "quant/x", title: "Tests DM") == nil)
         #expect(await recorder.requests.isEmpty)
     }
 
@@ -307,6 +311,22 @@ private actor StubHost {
         _ = await model.delegate("c1", cards: [Self.card("A"), Self.card("B")], cardsSeq: nil)
         #expect(await prompts.reasons == ["lancer 2 brief(s) délégué(s)"])
         #expect(DelegationReview.touchIDReason(count: 1) == "lancer 1 brief(s) délégué(s)")
+    }
+
+    /// Promouvoir merges into the current branch of JT's repository: the prompt names where and what (review F7).
+    @MainActor @Test func theTouchIDPromptOfPromotionNamesTheProjectAndTheConversation() async {
+        let prompts = Prompts()
+        let host = StubHost(detail: Self.detailJSON(cards: []))
+        let model = ControlModel(client: host.client, presence: HumanPresence { await prompts.ask($0); return true },
+                                 notifier: nil, socket: nil)
+        let session = ConversationSession(id: "c1")
+        await session.reload(using: host.client)
+        await session.promote(using: model)
+        #expect(await prompts.reasons == ["promouvoir dans quant/x les changements de « Tests DM »"])
+        #expect(session.note == "Promu dans work (abc1234)")
+        // A title is text from outside and can be long: plain, and cut.
+        #expect(ControlModel.promotionReason(project: "quant/x", title: "T\u{202E}evil" + String(repeating: "x", count: 100))
+                == "promouvoir dans quant/x les changements de « T evil" + String(repeating: "x", count: 54) + "… »")
     }
 
     /// The host will only accept diagnostic and pr; a card that says otherwise is not even offered Touch ID.

@@ -44,6 +44,7 @@ final class ConversationSession {
     private(set) var loadError: String?
     /// The last thing worth telling JT (a delegation, a promotion, a refusal).
     var note: String?
+    private(set) var promoting = false
     let flow = DelegationFlow()
 
     init(id: String) { self.id = id }
@@ -91,5 +92,18 @@ final class ConversationSession {
         }
         // After an answer the host's cards are the truth: it cleared the delegated ones and kept any that came since.
         await reload(using: model.client, adopting: answered != nil)
+    }
+
+    /// Promouvoir: Touch ID (naming the project and the conversation), then the merge. One at a time.
+    func promote(using model: ControlModel) async {
+        guard !promoting, let detail else { return }
+        promoting = true
+        defer { promoting = false }
+        if let reply = await model.promoteConversation(id, project: detail.project, title: detail.title) {
+            note = "Promu dans \(reply.branch) (\(reply.head))"
+        } else {
+            note = model.failureReason
+        }
+        await reload(using: model.client)
     }
 }

@@ -34,6 +34,17 @@ human where they are, and the approve path must prove a human is actually there.
   are kept on purpose); « Appliquer » asks for Touch ID and the host applies the frozen list once (a second apply
   is refused; the first report stays on screen). The two cleanup commands are not in the Commands tab: the list
   must be seen before it is applied.
+- Conversation opens a chat with Sonnet per project and mode (read, or modify in a worktree of its own). The
+  transcript streams from the host (`/ws/conversations/{id}`), a reply the host cut keeps its « …[+N caractères] »,
+  and the header gives the 5 h quota or, after a refusal on another limit (the weekly one), the day and time the
+  turn can be sent again; nothing is sent while the quota is spent. The detail is polled every 3 s while Sonnet
+  answers and every 15 s otherwise, the list every 30 s.
+- The delegation cards Sonnet proposes are edited in place, each with an identity of its own (a poll that shrinks
+  the list cannot crash an editor). « Déléguer N tâche(s)… » first shows every card in full, as plain text and
+  exactly as the host will seal it, then asks for Touch ID, then makes one host call that creates, seals and
+  launches the briefs. The number of the cards that were read (`cards_seq`) goes with the call: cards Sonnet sends
+  in the meantime stay in the conversation, and a review left open under new cards is closed. « Promouvoir »
+  merges the conversation's worktree; its Touch ID prompt names the project and the conversation.
 
 ## Build, test, install
 

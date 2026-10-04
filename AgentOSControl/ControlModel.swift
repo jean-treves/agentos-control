@@ -250,11 +250,19 @@ final class ControlModel {
         }
     }
 
+    /// What Touch ID says for Promouvoir: the merge lands in the current branch of this project's repository.
+    /// The title is text from outside: plain and cut.
+    static func promotionReason(project: String, title: String) -> String {
+        let name = title.plainText()
+        let shown = name.count > 60 ? String(name.prefix(60)) + "…" : name
+        return "promouvoir dans \(project.plainText()) les changements de « \(shown) »"
+    }
+
     /// Touch ID, then the merge of the conversation's worktree (D36); nil when JT did not confirm or the host
     /// refused it.
-    func promoteConversation(_ id: String) async -> PromotionReply? {
+    func promoteConversation(_ id: String, project: String, title: String) async -> PromotionReply? {
         lastError = nil
-        guard await presence.verify("promouvoir les changements de la conversation") else { return nil }
+        guard await presence.verify(Self.promotionReason(project: project, title: title)) else { return nil }
         do {
             let reply = try await client.promoteConversation(id)
             lastError = nil
