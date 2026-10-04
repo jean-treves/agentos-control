@@ -75,12 +75,13 @@ struct ConversationView: View {
     }
 }
 
-/// The 5-hour window the host reports: how much is used and when it reopens.
+/// The 5-hour window the host reports (how much is used and when it reopens), or the wait of a refused turn.
 struct QuotaText: View {
     let quota: QuotaInfo
+    var retryAt: Double?
 
     var body: some View {
-        Text(verbatim: [quota.line, quota.resetNote()].compactMap { $0 }.joined(separator: " · "))
+        Text(verbatim: quota.summary(retryAt: retryAt))
             .font(.caption).foregroundStyle(ConversationView.color(quota))
     }
 }
@@ -197,7 +198,7 @@ struct ConversationDetailView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: "\(detail.project) · \(options.modes[detail.mode] ?? detail.mode)".plainText())
                         .font(.headline)
-                    QuotaText(quota: detail.quota)
+                    QuotaText(quota: detail.quota, retryAt: detail.retryAt)
                 }
                 Spacer()
                 if detail.mode == "modify" {

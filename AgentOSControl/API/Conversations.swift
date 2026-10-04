@@ -47,6 +47,33 @@ nonisolated struct QuotaInfo: Decodable, Sendable, Hashable {
         }
     }
 
+    /// What the quota says. `retryAt` is the conversation's `retry_at`: when the limit that refused its last turn
+    /// lifts. While it is pending and later than the 5 h window (or the window is not spent), the limit in the way
+    /// is another one, the weekly one: the 5 h figures would give the wrong hour, so the wait is what is said.
+    func summary(retryAt: Double? = nil, now: Date = Date(), in timeZone: TimeZone = .current) -> String {
+        if let wait = waitNote(retryAt: retryAt, now: now, in: timeZone) {
+            return "quota Claude épuisé : rien n'est envoyé avant \(wait)"
+        }
+        return [line, resetNote(now: now, in: timeZone)].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private static let weekdays = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."]
+
+    /// The day (when it is not today) and time of `retryAt`, for a limit that is not the 5 h window.
+    private func waitNote(retryAt: Double?, now: Date, in timeZone: TimeZone) -> String? {
+        guard state == "exhausted", let retryAt, Date(timeIntervalSince1970: retryAt) > now else { return nil }
+        let fiveHourSpent = (fiveHourUtilization ?? 0) >= 1 && fiveHourResetsAt.map { retryAt <= $0 } == true
+        guard !fiveHourSpent else { return nil }
+        let date = Date(timeIntervalSince1970: retryAt)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let parts = calendar.dateComponents([.weekday, .day, .month, .hour, .minute], from: date)
+        let time = String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+        guard !calendar.isDate(date, inSameDayAs: now) else { return time }
+        let weekday = Self.weekdays[((parts.weekday ?? 1) - 1) % 7]
+        return String(format: "%@ %02d/%02d %@", weekday, parts.day ?? 0, parts.month ?? 0, time)
+    }
+
     /// When the window reopens, in `timeZone`; nil when unknown or already past.
     func resetNote(now: Date = Date(), in timeZone: TimeZone = .current) -> String? {
         guard let epoch = fiveHourResetsAt else { return nil }
@@ -69,6 +96,8 @@ nonisolated struct ConversationDetail: Decodable, Sendable, Hashable, Identifiab
     let busy: Bool
     let worktree: String?
     let quota: QuotaInfo
+    /// When the limit that refused the last turn lifts (epoch seconds), else nil: it can be the weekly one.
+    let retryAt: Double?
     let cards: [DelegationCard]
     let cardsError: String?
     /// +1 each time a reply brings new cards (`Conversation.cards_seq`): « Déléguer » sends the number of the cards

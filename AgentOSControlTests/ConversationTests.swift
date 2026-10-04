@@ -138,6 +138,14 @@ private actor StubHost {
         #expect(await recorder.requests.first?.url?.path() == "/api/conversations/c1")
     }
 
+    @Test func decodesTheRetryTimeOfARefusedTurn() async throws {
+        let detail = try await makeClient(body: Self.detailJSON(cards: [], retryAt: 1_789_837_200), recorder: recorder)
+            .conversation("c1")
+        #expect(detail.retryAt == 1_789_837_200)
+        let none = try await makeClient(body: Self.detailJSON(cards: []), recorder: recorder).conversation("c1")
+        #expect(none.retryAt == nil)
+    }
+
     @Test func cardsFromTheHostAreCleanedAndTheDefaultsFilled() throws {
         let raw = #"{"title":"T‮evil","project":"quant/x","goal":"g\u001B[31m","done_when":"d","output_mode":"pr","agentic_mode":"auto","executor_model":"auto:smart"}"#
         let decoder = JSONDecoder()
@@ -159,6 +167,41 @@ private actor StubHost {
         #expect(spent.resetNote(now: Date(timeIntervalSince1970: 1_789_990_000), in: utc) == "remise à zéro à 14:13")
         #expect(spent.resetNote(now: Date(timeIntervalSince1970: 1_790_000_001), in: utc) == nil)
         #expect(quota(0.2, nil, "ok").resetNote(now: Date(), in: utc) == nil)
+    }
+
+    /// `tests/fixtures/stream/f2_deny.jsonl`, JT's account: a turn refused on the WEEKLY limit (`rateLimitType`
+    /// seven_day, resets 2026-09-19 17:00 UTC) while the 5 h window sat at 17 % (resets 2026-09-18 14:20 UTC).
+    @Test func aWeeklyRefusalSaysWhenTheTurnCanBeSentNotWhenTheFiveHourWindowResets() {
+        let fiveHour = 1_789_741_200.0, weekly = 1_789_837_200.0
+        let spent = QuotaInfo(fiveHourUtilization: 0.17, fiveHourResetsAt: fiveHour, state: "exhausted")
+        let before = Date(timeIntervalSince1970: fiveHour - 3600)
+        let text = spent.summary(retryAt: weekly, now: before, in: utc)
+        #expect(text == "quota Claude épuisé : rien n'est envoyé avant sam. 19/09 17:00")
+        #expect(!text.contains("5 h") && !text.contains("14:20") && !text.contains("17 %"))
+        // After the 5 h reset the host forgets the figure; the refusal is still pending: no red « inconnu ».
+        let forgotten = QuotaInfo(fiveHourUtilization: nil, fiveHourResetsAt: fiveHour, state: "exhausted")
+        #expect(forgotten.summary(retryAt: weekly, now: Date(timeIntervalSince1970: fiveHour + 60), in: utc) == text)
+        // The same day: the time alone.
+        let sameDay = Date(timeIntervalSince1970: weekly - 7200)
+        #expect(spent.summary(retryAt: weekly, now: sameDay, in: utc) == "quota Claude épuisé : rien n'est envoyé avant 17:00")
+        // The detail says it is exhausted: the composer stays shut.
+        #expect(!ConversationDetailView.canSend(
+            ConversationDetail(id: "c1", title: "t", project: "p", mode: "read", turns: 1, busy: false, worktree: nil,
+                               quota: spent, retryAt: weekly, cards: [], cardsError: nil, cardsSeq: nil), draft: "encore"))
+    }
+
+    @Test func theFiveHourLimitKeepsItsFiguresAndTheNoRetryCaseIsUnchanged() {
+        let spent = QuotaInfo(fiveHourUtilization: 1, fiveHourResetsAt: 1_790_000_000, state: "exhausted")
+        let now = Date(timeIntervalSince1970: 1_789_990_000)
+        // retry_at is the 5 h window's own reset (or earlier): the 5 h wording stays.
+        #expect(spent.summary(retryAt: 1_790_000_000, now: now, in: utc)
+                == "quota 5 h épuisé (100 %) : rien n'est envoyé · remise à zéro à 14:13")
+        #expect(spent.summary(now: now, in: utc) == "quota 5 h épuisé (100 %) : rien n'est envoyé · remise à zéro à 14:13")
+        // A retry time already past says nothing new.
+        #expect(spent.summary(retryAt: 1_789_900_000, now: now, in: utc)
+                == "quota 5 h épuisé (100 %) : rien n'est envoyé · remise à zéro à 14:13")
+        let warn = QuotaInfo(fiveHourUtilization: 0.86, fiveHourResetsAt: 1_790_000_000, state: "warn")
+        #expect(warn.summary(retryAt: 1_791_000_000, now: now, in: utc) == "quota 5 h à 86 % : chaque message le consomme · remise à zéro à 14:13")
     }
 
     // MARK: Requests
@@ -496,7 +539,7 @@ private actor StubHost {
             ConversationDetail(id: "c1", title: "t", project: "quant/x", mode: "read", turns: 1, busy: busy,
                                worktree: nil, quota: QuotaInfo(fiveHourUtilization: 0.5, fiveHourResetsAt: nil,
                                                                state: state),
-                               cards: [], cardsError: nil, cardsSeq: nil)
+                               retryAt: nil, cards: [], cardsError: nil, cardsSeq: nil)
         }
         #expect(ConversationDetailView.canSend(detail(busy: false, state: "ok"), draft: "encore"))
         #expect(!ConversationDetailView.canSend(detail(busy: false, state: "ok"), draft: "  "))
