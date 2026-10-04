@@ -10,6 +10,51 @@ private actor Prompts {
     func ask(_ reason: String) { reasons.append(reason) }
 }
 
+private nonisolated let delegatedReply = #"{"delegated":[{"brief":"b.md","sha256":"s","task_ids":["t_1"],"run_ids":[]}]}"#
+
+/// A host that answers by route and remembers what it was asked: the detail can change between two reads, the way
+/// a poll sees a conversation move.
+private actor StubHost {
+    private(set) var requests: [URLRequest] = []
+    private var detail: String
+    private let delegateReply: String
+    private let detailAfterDelegation: String?
+
+    init(detail: String, delegateReply: String = delegatedReply, detailAfterDelegation: String? = nil) {
+        self.detail = detail
+        self.delegateReply = delegateReply
+        self.detailAfterDelegation = detailAfterDelegation
+    }
+
+    func show(_ body: String) { detail = body }
+
+    func answer(_ request: URLRequest) -> (Data, URLResponse) {
+        requests.append(request)
+        var body = detail
+        if request.httpMethod == "POST", request.url?.path().hasSuffix("/delegate") == true {
+            body = delegateReply
+            if let after = detailAfterDelegation { detail = after }
+        }
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        return (Data(body.utf8), response)
+    }
+
+    nonisolated var client: HostClient {
+        HostClient(baseURL: URL(string: "http://127.0.0.1:3107")!, token: { "test-token" },
+                   transport: { request in await self.answer(request) })
+    }
+
+    /// What each delegation carried: the cards (field → text) and the `cards_seq`, in order.
+    func delegations() -> [(cards: [[String: String]], seq: Int?)] {
+        requests.filter { $0.url?.path().hasSuffix("/delegate") == true }.compactMap { request in
+            guard let data = request.httpBody,
+                  let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let cards = body["cards"] as? [[String: String]] else { return nil }
+            return (cards, body["cards_seq"] as? Int)
+        }
+    }
+}
+
 @Suite struct ConversationTests {
     let recorder = RequestRecorder()
 
@@ -30,9 +75,20 @@ private actor Prompts {
      "cards":[{"title":"Test DM","project":"quant/x","goal":"Ajouter le test.\\nSans toucher le reste.","context":"",
                "done_when":"pytest vert","verify":"uv run pytest -q","output_mode":"pr","agentic_mode":"accept_diffs",
                "executor_model":"auto:smart","sonnet_effort":"medium"}],
-     "cards_error":"carte 2 : le brief n'a pas de verify:","busy":true,
+     "cards_error":"carte 2 : le brief n'a pas de verify:","cards_seq":2,"busy":true,
      "quota":{"five_hour_utilization":0.5,"five_hour_resets_at":null,"state":"ok"}}
     """
+
+    /// A detail with these cards (by title), as the host sends it.
+    static func detailJSON(cards titles: [String], seq: Int? = 1, busy: Bool = false, retryAt: Double? = nil,
+                           quota: String = #"{"five_hour_utilization":0.5,"five_hour_resets_at":null,"state":"ok"}"#) -> String {
+        let cards = titles.map {
+            #"{"title":"\#($0)","project":"quant/x","goal":"g","context":"","done_when":"d","verify":"v","output_mode":"pr","agentic_mode":"accept_diffs","executor_model":"auto:smart","sonnet_effort":"medium"}"#
+        }.joined(separator: ",")
+        let seqField = seq.map { #""cards_seq":\#($0),"# } ?? ""
+        return #"{"id":"c1","project":"quant/x","mode":"modify","title":"Tests DM","turns":2,"worktree":null,"retry_at":\#(retryAt.map { String($0) } ?? "null"),"# +
+            #""cards":[\#(cards)],"cards_error":null,\#(seqField)"busy":\#(busy),"quota":\#(quota)}"#
+    }
 
     static let options = ConversationOptions(
         projects: ["quant/x"], modes: ["read": "Lecture + délégation"],
@@ -300,6 +356,60 @@ private actor Prompts {
         await flow.confirm("c1", using: Self.model(recorder, presence: HumanPresence { _ in false }))
         #expect(flow.review != nil && flow.problem == ControlModel.notConfirmed)
         #expect(await recorder.requests.isEmpty)
+    }
+
+    // MARK: The card list (review T8.5c-b F1)
+
+    @MainActor private static func session(showing titles: [String], seq: Int? = 1,
+                                   after: String? = nil) async -> (ConversationSession, StubHost) {
+        let host = StubHost(detail: detailJSON(cards: titles, seq: seq), detailAfterDelegation: after)
+        let session = ConversationSession(id: "c1")
+        await session.reload(using: host.client)
+        return (session, host)
+    }
+
+    /// An editor holds the binding of its card while a field is being edited; the NSTextField's editor writes
+    /// back when the edit ends, after the row is gone. A binding by index crashed there (« Index out of range »).
+    @MainActor @Test func aBindingHeldOnACardThatTheHostRemovedIgnoresItsLateWrite() async {
+        let (session, host) = await Self.session(showing: ["A", "B"])
+        let ids = session.edits.items.map(\.id)
+        let second = session.binding(for: ids[1])
+        second.wrappedValue.title = "B éditée"
+        #expect(session.edits.cards.map(\.title) == ["A", "B éditée"])  // a live binding writes its own card
+        await host.show(Self.detailJSON(cards: ["C"], seq: 2))  // the poll brings one card back
+        await session.reload(using: host.client)
+        #expect(session.edits.cards.map(\.title) == ["C"] && !ids.contains(session.edits.items[0].id))
+        #expect(second.wrappedValue == .empty)  // the getter of a card that is gone
+        second.wrappedValue.title = "écriture tardive"  // the setter: dropped, in no other card either
+        let first = session.binding(for: ids[0])
+        first.wrappedValue.goal = "autre écriture tardive"
+        #expect(session.edits.cards.map(\.title) == ["C"] && session.edits.cards[0].goal == "g")
+    }
+
+    @MainActor @Test func theCardsDoNotMoveWhileTheHostSendsTheSameOnes() async {
+        let (session, host) = await Self.session(showing: ["A", "B"])
+        let before = session.edits.items.map(\.id)
+        session.binding(for: before[0]).wrappedValue.title = "A éditée"
+        await session.reload(using: host.client)  // the next poll: the host has not changed
+        #expect(session.edits.items.map(\.id) == before && session.edits.cards[0].title == "A éditée")
+    }
+
+    /// E2E 37: JT edits a field, clicks « Déléguer » without leaving it, confirms; the list is emptied behind
+    /// the editor that still holds its binding.
+    @MainActor @Test func delegatingEmptiesTheListUnderAnEditorThatStillHoldsItsBinding() async {
+        let (session, host) = await Self.session(showing: ["A", "B"], after: Self.detailJSON(cards: [], seq: 1))
+        let held = session.edits.items.map { session.binding(for: $0.id) }
+        held[0].wrappedValue.verify = "uv run pytest -q"
+        session.beginReview(options: Self.options)
+        let model = ControlModel(client: host.client, presence: HumanPresence { _ in true }, notifier: nil, socket: nil)
+        await session.delegate(using: model)
+        #expect(session.edits.items.isEmpty && session.flow.review == nil)
+        #expect(session.note == "Délégué : b.md (tâche t_1)")
+        held[0].wrappedValue.verify = "écriture tardive"  // the field editor ends its edit
+        held[1].wrappedValue = Self.card("autre")
+        #expect(session.edits.items.isEmpty && held[0].wrappedValue == .empty)
+        let sent = await host.delegations().first?.cards
+        #expect(sent?.map { $0["verify"] } == ["uv run pytest -q", "v"])  // what JT edited is what left
     }
 
     // MARK: Composer, transcript, origin

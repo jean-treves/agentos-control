@@ -157,38 +157,42 @@ struct ConversationDetailView: View {
     let id: String
     let options: ConversationOptions
     @Environment(ControlModel.self) private var model
-    @State private var detail: ConversationDetail?
+    @State private var session: ConversationSession
     @State private var buffer = DialogueBuffer()
-    @State private var cards: [DelegationCard] = []
     @State private var draft = ""
-    @State private var note: String?
-    @State private var loadError: String?
     @State private var sending = false
     @State private var promoting = false
-    @State private var flow = DelegationFlow()
+
+    init(id: String, options: ConversationOptions) {
+        self.id = id
+        self.options = options
+        _session = State(initialValue: ConversationSession(id: id))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             header
             ConversationTranscript(buffer: buffer)
-            if !cards.isEmpty || detail?.cardsError != nil { cardsPanel }
+            if !session.edits.items.isEmpty || session.detail?.cardsError != nil { cardsPanel }
             composer
-            if let note { Text(verbatim: note.plainText()).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+            if let note = session.note {
+                Text(verbatim: note.plainText()).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            }
         }
         .padding(8)
-        .task { await pollEvery(.seconds(3)) { await reload() } }
+        .task { await pollEvery(.seconds(3)) { await session.reload(using: model.client) } }
         .task {
             let socket = DialogueSocket(url: DialogueSocket.conversationURL(for: model.client.baseURL, id: id),
                                         maxTextLength: DialogueLine.transcriptTextLength)
             for await event in socket.events() { buffer.apply(event) }
         }
-        .sheet(isPresented: Binding(get: { flow.review != nil }, set: { if !$0 { flow.cancel() } })) {
-            DelegationSheet(flow: flow) { await delegate() }
+        .sheet(isPresented: Binding(get: { session.flow.review != nil }, set: { if !$0 { session.flow.cancel() } })) {
+            DelegationSheet(flow: session.flow) { await session.delegate(using: model) }
         }
     }
 
     @ViewBuilder private var header: some View {
-        if let detail {
+        if let detail = session.detail {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: "\(detail.project) · \(options.modes[detail.mode] ?? detail.mode)".plainText())
@@ -201,28 +205,30 @@ struct ConversationDetailView: View {
                         .disabled(detail.busy || promoting)
                 }
             }
-        } else if let loadError {
+        } else if let loadError = session.loadError {
             Text(verbatim: loadError.plainText()).font(.caption).foregroundStyle(.red)
         }
     }
 
     private var cardsPanel: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let error = detail?.cardsError {
+            if let error = session.detail?.cardsError {
                 Text(verbatim: error.plainText()).font(.caption).foregroundStyle(.red).textSelection(.enabled)
             }
             ScrollView {
                 VStack(spacing: 6) {
-                    ForEach(cards.indices, id: \.self) { i in CardEditor(card: $cards[i], options: options) }
+                    ForEach(session.edits.items) { item in
+                        CardEditor(card: session.binding(for: item.id), options: options)
+                    }
                 }
             }
             .frame(maxHeight: 280)
             HStack {
                 Spacer()
                 // Nothing is sent from here: the button opens the review of every card.
-                Button("Déléguer \(cards.count) tâche(s)…") { flow.begin(cards: cards, options: options) }
+                Button("Déléguer \(session.edits.items.count) tâche(s)…") { session.beginReview(options: options) }
                     .buttonStyle(.borderedProminent)
-                    .disabled(cards.isEmpty || flow.sending)
+                    .disabled(session.edits.items.isEmpty || session.flow.sending)
             }
         }
     }
@@ -234,13 +240,13 @@ struct ConversationDetailView: View {
                 .overlay(RoundedRectangle(cornerRadius: 4).stroke(.quaternary))
             Button(sendTitle) { Task { await send() } }
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(sending || !Self.canSend(detail, draft: draft))
+                .disabled(sending || !Self.canSend(session.detail, draft: draft))
         }
     }
 
     private var sendTitle: String {
-        if detail?.busy == true { return "Sonnet répond…" }
-        return detail?.quota.state == "exhausted" ? "Quota épuisé" : "Envoyer"
+        if session.detail?.busy == true { return "Sonnet répond…" }
+        return session.detail?.quota.state == "exhausted" ? "Quota épuisé" : "Envoyer"
     }
 
     /// Nothing is sent while Sonnet answers or once the quota is spent (spec §17.13).
@@ -255,17 +261,6 @@ struct ConversationDetailView: View {
         note == .connecting ? "connexion…" : "aucun message"
     }
 
-    private func reload() async {
-        do {
-            let fresh = try await model.client.conversation(id)
-            if fresh.cards != detail?.cards { cards = fresh.cards }  // JT's edits survive the polling
-            detail = fresh
-            loadError = nil
-        } catch {
-            loadError = error.localizedDescription
-        }
-    }
-
     private func send() async {
         guard !sending else { return }  // a double click sends one message
         sending = true
@@ -273,25 +268,11 @@ struct ConversationDetailView: View {
         do {
             _ = try await model.client.sendMessage(id, text: draft)
             draft = ""
-            note = nil
+            session.note = nil
         } catch {
-            note = error.descriptionAfterSend
+            session.note = error.descriptionAfterSend
         }
-        await reload()
-    }
-
-    /// Runs when JT confirms the review: Touch ID, the one host call, then what the host says.
-    private func delegate() async {
-        await flow.confirm(id, using: model)
-        if let reply = flow.reply {
-            cards = []  // the host cleared them; a second delegation would be a duplicate
-            note = "Délégué : " + reply.delegated
-                .map { "\($0.brief) (tâche \($0.taskIds.joined(separator: ", ")))" }
-                .joined(separator: " ; ")
-        } else if let problem = flow.problem {
-            note = problem
-        }
-        await reload()
+        await session.reload(using: model.client)
     }
 
     private func promote() async {
@@ -299,11 +280,11 @@ struct ConversationDetailView: View {
         promoting = true
         defer { promoting = false }
         if let reply = await model.promoteConversation(id) {
-            note = "Promu dans \(reply.branch) (\(reply.head))"
+            session.note = "Promu dans \(reply.branch) (\(reply.head))"
         } else {
-            note = model.failureReason
+            session.note = model.failureReason
         }
-        await reload()
+        await session.reload(using: model.client)
     }
 }
 
