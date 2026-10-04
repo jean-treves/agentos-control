@@ -52,7 +52,7 @@ private let paris = TimeZone(identifier: "Europe/Paris")!
     @Test func aRunawayLineIsCut() throws {
         let long = String(repeating: "x", count: 10_000)
         let line = try #require(DialogueLine.parse(#"{"ts":"t","role":"hermes","text":"\#(long)"}"#))
-        #expect(line.text.count == DialogueLine.maxTextLength + 1 && line.text.hasSuffix("…"))
+        #expect(line.text.hasPrefix("xxxx") && line.text.hasSuffix("…[+6000 caractères]"))
     }
 
     // MARK: local clock (E2E 36 G: the panes showed UTC while `agentos tail` and the timeline show local time)

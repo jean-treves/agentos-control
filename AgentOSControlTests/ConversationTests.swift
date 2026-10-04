@@ -607,17 +607,35 @@ private actor StubHost {
         #expect(ApprovalOrigin.label(approval) == "Conversation avec Sonnet · run 0f0e0d0c")
     }
 
-    /// A reply is one transcript line of up to 100 000 characters (`conversations.MAX_LINE_CHARS`): the
-    /// transcript shows it whole, a run's pane keeps its 4 000.
-    @Test func aLongReplyIsShownWholeInATranscriptAndCutInAPane() throws {
-        let reply = String(repeating: "é", count: 50_000)
-        let json = String(decoding: try JSONEncoder().encode(["ts": "2026-10-04T10:00:00+00:00", "role": "sonnet", "text": reply]),
-                          as: UTF8.self)
-        #expect(DialogueLine.parse(json, maxTextLength: DialogueLine.transcriptTextLength)?.text == reply)
-        #expect(DialogueLine.parse(json)?.text.count == DialogueLine.maxTextLength + 1)  // + the ellipsis
-        let socket = DialogueSocket(url: URL(string: "ws://127.0.0.1:3107/ws/conversations/c1")!,
-                                    maxTextLength: DialogueLine.transcriptTextLength)
-        #expect(socket.maxTextLength == 100_000)
+    private static func line(_ text: String) throws -> String {
+        String(decoding: try JSONEncoder().encode(["ts": "2026-10-04T10:00:00+00:00", "role": "sonnet", "text": text]),
+               as: UTF8.self)
+    }
+
+    /// A reply is one transcript line of up to 100 000 characters (`conversations.MAX_LINE_CHARS`) followed, when
+    /// the host cut it, by `…[+N caractères]` (`dialogue.write`; N is at most 100 000 here, RAW_LIMIT is 200 000):
+    /// the transcript shows both, a run's pane keeps its 4 000.
+    @Test func aReplyTheHostCutKeepsItsMarkerInTheTranscript() throws {
+        let socket = DialogueSocket.transcript(for: URL(string: "http://127.0.0.1:3107")!, id: "c1")  // what the view opens
+        #expect(socket.url.absoluteString == "ws://127.0.0.1:3107/ws/conversations/c1")
+        let whole = String(repeating: "é", count: 50_000)
+        #expect(DialogueLine.parse(try Self.line(whole), maxTextLength: socket.maxTextLength)?.text == whole)
+        for lost in [1, 50_000, 100_000] {
+            let cut = String(repeating: "a", count: 100_000) + "…[+\(lost) caractères]"
+            let shown = DialogueLine.parse(try Self.line(cut), maxTextLength: socket.maxTextLength)?.text
+            #expect(shown == cut, "lost \(lost)")  // the marker is not cut off
+        }
+    }
+
+    /// A line longer than anything the host writes is cut, and JT is told how much is missing.
+    @Test func aLineLongerThanTheLimitSaysHowMuchIsMissing() throws {
+        let socket = DialogueSocket.transcript(for: URL(string: "http://127.0.0.1:3107")!, id: "c1")
+        let long = String(repeating: "b", count: socket.maxTextLength + 50)
+        let shown = try #require(DialogueLine.parse(try Self.line(long), maxTextLength: socket.maxTextLength)?.text)
+        #expect(shown.hasSuffix("…[+50 caractères]") && shown.count == socket.maxTextLength + "…[+50 caractères]".count)
+        let pane = try #require(DialogueLine.parse(try Self.line(String(repeating: "é", count: 5000)))?.text)
+        #expect(pane.hasSuffix("…[+1000 caractères]") && pane.hasPrefix("éééé"))
+        #expect(pane.count == DialogueLine.maxTextLength + "…[+1000 caractères]".count)
     }
 
     @Test func rolesPickTheirPlaceInTheTranscript() {

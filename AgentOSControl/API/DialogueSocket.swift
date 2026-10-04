@@ -69,8 +69,9 @@ nonisolated struct DialogueLine: Decodable, Sendable, Hashable {
     /// The host cuts a line at 2 000 characters; twice that is already a runaway.
     static let maxTextLength = 4000
     /// A conversation's reply is one line of up to 100 000 characters (`conversations.MAX_LINE_CHARS`) and
-    /// the transcript shows it whole.
-    static let transcriptTextLength = 100_000
+    /// the transcript shows it whole, with the `…[+N caractères]` the host adds after a cut (`dialogue.write`): room
+    /// for it, or the app would cut off the one thing that says how much is missing.
+    static let transcriptTextLength = 100_000 + 64
     private static let maxRoleLength = 40
 
     let ts: String
@@ -81,7 +82,9 @@ nonisolated struct DialogueLine: Decodable, Sendable, Hashable {
         self.ts = ts.plainText()
         self.role = String(role.plainText().prefix(Self.maxRoleLength))
         let body = text.plainText(keepingLayout: true)
-        self.text = body.count > maxTextLength ? String(body.prefix(maxTextLength)) + "…" : body
+        // The reader is told how much is missing, as the host's own cut does.
+        self.text = body.count > maxTextLength
+            ? String(body.prefix(maxTextLength)) + "…[+\(body.count - maxTextLength) caractères]" : body
     }
 
     private enum CodingKeys: String, CodingKey { case ts, role, text }
@@ -210,6 +213,11 @@ nonisolated final class DialogueSocket: Sendable {
     init(url: URL, maxTextLength: Int = DialogueLine.maxTextLength) {
         self.url = url
         self.maxTextLength = maxTextLength
+    }
+
+    /// The listener of a conversation's transcript: lines of up to `DialogueLine.transcriptTextLength`.
+    static func transcript(for baseURL: URL, id: String) -> DialogueSocket {
+        DialogueSocket(url: conversationURL(for: baseURL, id: id), maxTextLength: DialogueLine.transcriptTextLength)
     }
 
     /// `/ws/conversations/{id}` (T8.5c): a conversation's transcript, the same lines as a run's pane.

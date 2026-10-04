@@ -191,8 +191,7 @@ struct ConversationDetailView: View {
             }
         }
         .task {
-            let socket = DialogueSocket(url: DialogueSocket.conversationURL(for: model.client.baseURL, id: id),
-                                        maxTextLength: DialogueLine.transcriptTextLength)
+            let socket = DialogueSocket.transcript(for: model.client.baseURL, id: id)
             for await event in socket.events() { buffer.apply(event) }
         }
         .sheet(isPresented: Binding(get: { session.flow.review != nil }, set: { if !$0 { session.flow.cancel() } })) {
