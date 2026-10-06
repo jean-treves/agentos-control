@@ -9,6 +9,9 @@ struct CommandsView: View {
     @State private var error: String?
     @State private var lastLaunch: String?
     @State private var active: CommandSpec?
+    /// The Drawback just launched: its time, for « Armer le réveil » (one `pmset` wake, JT's password).
+    @State private var armDate: Date?
+    @State private var armMessage: String?
 
     var body: some View {
         VSplitView {
@@ -35,6 +38,12 @@ struct CommandsView: View {
                 if let error { Text(verbatim: error).font(.caption).foregroundStyle(.red) }
                 if let lastLaunch { Text(verbatim: lastLaunch).font(.caption).foregroundStyle(.secondary) }
                 Spacer()
+                if let armDate {
+                    Button("Armer le réveil (\(armDate.formatted(date: .abbreviated, time: .shortened)))…") {
+                        armMessage = NightArm.arm(at: armDate.addingTimeInterval(30)) ?? "Réveil armé"
+                    }
+                }
+                if let armMessage { Text(verbatim: armMessage).font(.caption) }
             }
             .padding(8)
         }
@@ -64,6 +73,8 @@ struct CommandsView: View {
     private func launch(_ spec: CommandSpec, _ values: [String: String]) async -> String? {
         guard let launch = await model.runCommand(spec, params: values) else { return model.failureReason }
         lastLaunch = Self.summary(launch)
+        armDate = Self.armTime(spec.name, values)
+        armMessage = nil
         await load()  // choices (briefs, runs to promote) change after a launch
         return nil
     }
@@ -71,6 +82,12 @@ struct CommandsView: View {
     /// Runs ▸ Ménage… shows the list before « Appliquer »; the generic form would apply whatever proposal
     /// comes first in the host's choices, one JT never saw (D24: the proposal is applied as it was shown).
     private static let cleanupOnly: Set<String> = ["menage", "menage-appliquer"]
+
+    /// Only a Drawback wakes the Mac, at the time the form sent (and the host accepted).
+    static func armTime(_ command: String, _ values: [String: String]) -> Date? {
+        guard command == "drawback" else { return nil }
+        return values["at"].flatMap { ISO8601DateFormatter().date(from: $0) }
+    }
 
     static func listed(_ specs: [CommandSpec]) -> [CommandSpec] { specs.filter { !cleanupOnly.contains($0.name) } }
 
