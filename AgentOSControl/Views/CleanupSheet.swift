@@ -97,7 +97,7 @@ struct CleanupSheet: View {
                         .font(.caption.monospaced()).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Text("Le diff de chaque worktree est archivé en patch avant son retrait ; les fichiers ignorés et les dossiers tmp vont dans _a-trier. Aucune branche supprimée.")
+                Text("Le diff de chaque worktree est archivé en patch avant son retrait ; les environnements virtuels et les caches partent avec lui, les autres fichiers ignorés et les dossiers tmp vont dans _a-trier. Aucune branche supprimée.")
                     .font(.caption).foregroundStyle(.secondary)
             } else if flow.problem == nil {
                 ProgressView("Haiku prépare la liste…")

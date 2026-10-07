@@ -106,5 +106,6 @@ agentos tail <run> --claude (ou --hermes).
 ## Ménage
 Runs ▸ Ménage… : Haiku commente la liste des worktrees et dossiers temporaires des runs finis, jamais ceux d'un run
 vivant ni en attente de promotion. Tu relis la liste, rien n'est touché. « Appliquer » (**Touch ID**) archive le diff
-de chaque worktree en patch dans le dossier du run, retire le worktree, et déplace le reste (fichiers ignorés,
-dossiers tmp) dans _a-trier. Aucune branche n'est supprimée. Une proposition ne s'applique qu'une fois.
+de chaque worktree en patch dans le dossier du run, retire le worktree (les environnements virtuels et les caches
+partent avec lui) et déplace les autres fichiers ignorés et les dossiers tmp dans _a-trier. Aucune branche n'est
+supprimée. Une proposition ne s'applique qu'une fois.
