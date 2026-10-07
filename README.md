@@ -18,7 +18,8 @@ human where they are, and the approve path must prove a human is actually there.
   unauthenticated; control routes carry the host's bearer token, read from the Keychain through
   `/usr/bin/security` for every action and never logged. No token, no request.
 - New approvals are polled every 2 s (the host's WebSocket only announces resolutions and the kill
-  switch); each one becomes a notification with Approve and Deny.
+  switch); each one becomes a notification with Approve and Deny, and clicking the notification
+  opens the app on its card.
 - Each approval follows a pure state machine: a decision is sent only from the `deciding` state,
   and `approve` reaches it only after Touch ID. Late Touch ID answers, decisions taken elsewhere,
   our own decision echoed by the socket and polls racing a POST are all handled and unit-tested.
