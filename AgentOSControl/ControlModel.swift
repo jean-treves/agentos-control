@@ -169,6 +169,11 @@ final class ControlModel {
         await send(id, approve: false)
     }
 
+    /// What a card's button asks for: the host decision it carries. Approving goes through Touch ID, denying does not.
+    func decide(_ id: String, approves: Bool) async {
+        if approves { await approve(id) } else { await deny(id) }
+    }
+
     /// A notification can outlive the process that posted it: refresh before trusting the id.
     func handleNotificationAction(approvalID: String, approve: Bool) async {
         if book[approvalID] == nil { await refreshApprovals() }

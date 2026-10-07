@@ -2,6 +2,9 @@ import AppKit
 import SwiftUI
 
 struct MenuBarView: View {
+    /// The popover's width. The cards inside it, out-of-mandate buttons included, must fit it less the padding.
+    static let popoverWidth: CGFloat = 420
+
     @Environment(ControlModel.self) private var model
     @Environment(\.openSettings) private var openSettings
     let delegate: AppDelegate
@@ -43,7 +46,7 @@ struct MenuBarView: View {
             }
         }
         .padding()
-        .frame(width: 380)
+        .frame(width: Self.popoverWidth)
     }
 
     private var statusLine: String {

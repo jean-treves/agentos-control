@@ -76,15 +76,11 @@ struct ApprovalRow: View {
             let wording = ApprovalOrigin.wording(for: state.approval)
             HStack {
                 if ApprovalOrigin.isOutOfMandate(state.approval) {
-                    // Refusing lets the run go on, the likely answer: it is the default. Widening the mandate stops it.
-                    Button(wording.deny) { Task { await model.deny(state.id) } }
-                        .buttonStyle(.borderedProminent)
-                    Button(wording.approve) { Task { await model.approve(state.id) } }
-                        .buttonStyle(.bordered)
+                    // Stacked, the likely answer on top: side by side the two labels are wider than the menu bar
+                    // popover that shows this card too.
+                    VStack(alignment: .leading) { buttons(wording) }
                 } else {
-                    Button(wording.approve) { Task { await model.approve(state.id) } }
-                        .buttonStyle(.borderedProminent)
-                    Button(wording.deny, role: .destructive) { Task { await model.deny(state.id) } }
+                    buttons(wording)
                 }
                 switch state.phase {
                 case .awaitingPresence: Text("Touch ID…").font(.caption)
@@ -96,5 +92,21 @@ struct ApprovalRow: View {
             if let note = wording.note { Text(note).font(.caption).foregroundStyle(.secondary) }
         }
         .padding(.vertical, 4)
+    }
+
+    /// The card's buttons as `ApprovalOrigin.wording` lists them: each sends the host decision it carries.
+    private func buttons(_ wording: ApprovalOrigin.Wording) -> some View {
+        ForEach(wording.choices) { choice in
+            let button = Button(choice.title, role: choice.destructive ? .destructive : nil) {
+                Task { await model.decide(state.id, approves: choice.approves) }
+            }
+            if choice.prominent {
+                button.buttonStyle(.borderedProminent)
+            } else if choice.destructive {
+                button
+            } else {
+                button.buttonStyle(.bordered)
+            }
+        }
     }
 }
