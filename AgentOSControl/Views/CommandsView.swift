@@ -40,7 +40,8 @@ struct CommandsView: View {
                 Spacer()
                 if let armDate {
                     Button("Armer le réveil (\(armDate.formatted(date: .abbreviated, time: .shortened)))…") {
-                        armMessage = NightArm.arm(at: armDate.addingTimeInterval(30)) ?? "Réveil armé"
+                        let armed = NightArm.arm(at: armDate.addingTimeInterval(30))
+                        armMessage = armed.error ?? ["Réveil armé", armed.notice].compactMap { $0 }.joined(separator: " — ")
                     }
                 }
                 if let armMessage { Text(verbatim: armMessage).font(.caption) }
