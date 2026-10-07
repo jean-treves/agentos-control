@@ -4,6 +4,8 @@ import UserNotifications
 /// What ControlModel needs from Notification Center (a stub in tests).
 protocol ApprovalNotifying: AnyObject {
     var onAction: ((_ approvalID: String, _ approve: Bool) async -> Void)? { get set }
+    /// A click on the banner itself, not on one of its buttons.
+    var onOpen: ((_ approvalID: String) async -> Void)? { get set }
     func install()
     func requestAuthorization() async -> Bool
     func isAuthorized() async -> Bool
@@ -19,8 +21,22 @@ final class ApprovalNotifier: NSObject, UNUserNotificationCenterDelegate, Approv
     nonisolated static let approveID = "APPROVE"
     nonisolated static let denyID = "DENY"
 
+    /// What a click on a notification asks for: its buttons decide, its body opens the app on the card.
+    enum Route { case approve, deny, open, ignore }
+
+    nonisolated static func route(_ actionIdentifier: String) -> Route {
+        switch actionIdentifier {
+        case Self.approveID: .approve
+        case Self.denyID: .deny
+        case UNNotificationDefaultActionIdentifier: .open
+        default: .ignore
+        }
+    }
+
     /// Set by ControlModel: runs the same Touch ID → decision path as the window.
     var onAction: ((_ approvalID: String, _ approve: Bool) async -> Void)?
+    /// Set by ControlModel: brings the window up on the approval's card.
+    var onOpen: ((_ approvalID: String) async -> Void)?
     private let logger = Logger(subsystem: "com.jeantreves.agentoscontrol", category: "notifications")
 
     /// Call at launch, before any notification can be answered.
@@ -81,13 +97,21 @@ final class ApprovalNotifier: NSObject, UNUserNotificationCenterDelegate, Approv
         _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
     ) async {
         let approvalID = response.notification.request.identifier
-        let action = response.actionIdentifier
-        guard action == Self.approveID || action == Self.denyID else { return }
-        await deliver(approvalID: approvalID, approve: action == Self.approveID)
+        switch Self.route(response.actionIdentifier) {
+        case .approve: await deliver(approvalID: approvalID, approve: true)
+        case .deny: await deliver(approvalID: approvalID, approve: false)
+        case .open: await deliverOpen(approvalID: approvalID)
+        case .ignore: break
+        }
     }
 
     private func deliver(approvalID: String, approve: Bool) async {
         logger.notice("notification action \(approve ? "APPROVE" : "DENY", privacy: .public) on \(approvalID, privacy: .public)")
         await onAction?(approvalID, approve)
+    }
+
+    private func deliverOpen(approvalID: String) async {
+        logger.notice("notification opened on \(approvalID, privacy: .public)")
+        await onOpen?(approvalID)
     }
 }

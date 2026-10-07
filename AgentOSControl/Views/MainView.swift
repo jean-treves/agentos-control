@@ -18,6 +18,11 @@ struct MainView: View {
             detail(section).navigationTitle(section.title)
         }
         .frame(minWidth: 900, minHeight: 560)
+        // A click on an approval's notification asks for its card. `initial`: with the window closed, the
+        // request is set before this view exists, so no change would ever be seen.
+        .onChange(of: model.revealedApprovalID, initial: true) { _, id in
+            if id != nil { section = .approvals }
+        }
     }
 
     private var selection: Binding<SidebarItem?> {

@@ -48,6 +48,10 @@ private struct MenuBarLabel: View {
             Image(systemName: model.statusSymbol)
             if !model.openApprovals.isEmpty { Text("\(model.openApprovals.count)") }
         }
-        .onAppear { delegate.openMainWindow = { openWindow(id: "main") } }
+        .onAppear {
+            delegate.openMainWindow = { openWindow(id: "main") }
+            // A banner clicked while the window is closed brings it up like the Dock does.
+            model.openWindow = { delegate.showMainWindow() }
+        }
     }
 }

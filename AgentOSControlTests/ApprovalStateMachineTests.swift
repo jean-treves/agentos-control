@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UserNotifications
 @testable import AgentOSControl
 
 private let deadline = Date(timeIntervalSince1970: 1_790_000_300)
@@ -201,6 +202,7 @@ func eventually(_ condition: () async -> Bool) async -> Bool {
 /// `prompt` holds the authorization request like the system prompt waiting for a click.
 final class NotifierStub: ApprovalNotifying {
     var onAction: ((_ approvalID: String, _ approve: Bool) async -> Void)?
+    var onOpen: ((_ approvalID: String) async -> Void)?
     var authorized: Bool
     private(set) var posted: [String] = []
     private let prompt: FirstCallGate?
@@ -218,6 +220,31 @@ final class NotifierStub: ApprovalNotifying {
     func isAuthorized() async -> Bool { authorized }
     func post(_ approval: Approval, context: ApprovalContext?) async { posted.append(approval.id) }
     func withdraw(_ approvalIDs: [String]) {}
+}
+
+/// Stands in for `AppDelegate.showMainWindow`: counts the openings and remembers which approvals the
+/// model had loaded when the window was asked for (a card cannot be shown before it is known).
+final class WindowSpy {
+    private(set) var openings = 0
+    private(set) var knownWhenOpened: [String] = []
+    weak var model: ControlModel?
+
+    func open() {
+        openings += 1
+        knownWhenOpened = model?.openApprovals.map(\.approval.id) ?? []
+    }
+}
+
+/// What a click on a notification means: its buttons decide, its body opens the app on the card.
+@Suite struct ApprovalNotifierRouteTests {
+    @Test func aClickMeansWhatItsActionIdentifierSays() {
+        #expect(ApprovalNotifier.route(ApprovalNotifier.approveID) == .approve)
+        #expect(ApprovalNotifier.route(ApprovalNotifier.denyID) == .deny)
+        // The body of the banner: `didReceive` used to drop it (its guard let only APPROVE and DENY through).
+        #expect(ApprovalNotifier.route(UNNotificationDefaultActionIdentifier) == .open)
+        #expect(ApprovalNotifier.route(UNNotificationDismissActionIdentifier) == .ignore)
+        #expect(ApprovalNotifier.route("SOMETHING_ELSE") == .ignore)
+    }
 }
 
 /// Counts Touch ID prompts and answers with a fixed result.
@@ -280,7 +307,8 @@ private func routedClient(
 
     private func model(
         present: Bool, touchID: FirstCallGate? = nil, postGate: FirstCallGate? = nil,
-        journal: (@Sendable (_ afterSeq: Int) -> String)? = nil, notifier: NotifierStub? = nil
+        journal: (@Sendable (_ afterSeq: Int) -> String)? = nil, notifier: NotifierStub? = nil,
+        openWindow: @escaping @MainActor () -> Void = {}
     ) -> ControlModel {
         let probe = probe
         return ControlModel(
@@ -290,7 +318,7 @@ private func routedClient(
                 await touchID?.pass()
                 return present
             },
-            notifier: notifier, socket: nil)
+            notifier: notifier, socket: nil, openWindow: openWindow)
     }
 
     private func posts() async -> [String] {
@@ -432,6 +460,52 @@ private func routedClient(
         await model.handleNotificationAction(approvalID: "0f0f0f0f-0000-4000-8000-000000000000", approve: true)
         #expect(await probe.prompts == 0)
         #expect(await posts().isEmpty)
+    }
+
+    @Test func clickingTheNotificationBodyRevealsTheCard() async {
+        let window = WindowSpy()
+        let model = model(present: true, openWindow: window.open)
+        window.model = model
+        await model.refreshApprovals()
+        await model.reveal(approvalID: id)
+        #expect(model.revealedApprovalID == id)
+        #expect(window.openings == 1)
+        // Looking is not deciding: a click on the body asks for no Touch ID and sends nothing.
+        #expect(await probe.prompts == 0)
+        #expect(await posts().isEmpty)
+    }
+
+    @Test func revealingAnUnknownApprovalRefreshesFirst() async {
+        let window = WindowSpy()
+        let model = model(present: true, openWindow: window.open)
+        window.model = model
+        await model.reveal(approvalID: id)  // a notification can outlive the process that posted it
+        #expect(await recorder.requests.contains { $0.url?.path() == "/api/approvals/pending" })
+        #expect(window.knownWhenOpened.contains(id))  // the card is loaded by the time the window is asked for
+        #expect(model.revealedApprovalID == id)
+    }
+
+    @Test func theNotifiersBodyClickReachesTheModel() async {
+        let notifier = NotifierStub(authorized: true)
+        let window = WindowSpy()
+        let model = model(present: true, notifier: notifier, openWindow: window.open)
+        window.model = model
+        await notifier.onOpen?(id)
+        #expect(model.revealedApprovalID == id)
+        #expect(window.openings == 1)
+    }
+
+    /// The window clears the request once the card is shown: a later opening must not jump there again,
+    /// and the same card asked for twice must fire twice.
+    @Test func aShownRevealIsConsumed() async {
+        let window = WindowSpy()
+        let model = model(present: true, openWindow: window.open)
+        await model.reveal(approvalID: id)
+        model.clearReveal()
+        #expect(model.revealedApprovalID == nil)
+        await model.reveal(approvalID: id)
+        #expect(model.revealedApprovalID == id)
+        #expect(window.openings == 2)
     }
 
     @Test func killSwitchNeedsTouchIDBothWays() async {

@@ -17,21 +17,32 @@ final class ControlModel {
     private(set) var activeRuns: [RunSummary] = []
     /// nil until the notifier answers (or forever without one).
     private(set) var notificationsAuthorized: Bool?
+    /// The approval JT asked to see by clicking its notification; the window shows that card, then clears it.
+    private(set) var revealedApprovalID: String?
     var lastError: String?
 
     @ObservationIgnored private let presence: HumanPresence
     @ObservationIgnored private let notifier: (any ApprovalNotifying)?
     @ObservationIgnored private let socket: ApprovalsSocket?
+    /// Brings the main window up; the App sets it (a banner clicked while the window is closed).
+    @ObservationIgnored var openWindow: @MainActor () -> Void
     @ObservationIgnored private var loops: [Task<Void, Never>] = []
     @ObservationIgnored private let logger = Logger(subsystem: "com.jeantreves.agentoscontrol", category: "model")
 
-    init(client: HostClient, presence: HumanPresence, notifier: (any ApprovalNotifying)?, socket: ApprovalsSocket?) {
+    init(
+        client: HostClient, presence: HumanPresence, notifier: (any ApprovalNotifying)?, socket: ApprovalsSocket?,
+        openWindow: @escaping @MainActor () -> Void = {}
+    ) {
         self.client = client
         self.presence = presence
         self.notifier = notifier
         self.socket = socket
+        self.openWindow = openWindow
         notifier?.onAction = { [weak self] approvalID, approve in
             await self?.handleNotificationAction(approvalID: approvalID, approve: approve)
+        }
+        notifier?.onOpen = { [weak self] approvalID in
+            await self?.reveal(approvalID: approvalID)
         }
     }
 
@@ -168,6 +179,17 @@ final class ControlModel {
         }
         if approve { await self.approve(approvalID) } else { await deny(approvalID) }
     }
+
+    /// A click on a notification's body: show its card. Refresh first when the id is unknown (as above),
+    /// and set the request before the window opens: a window that did not exist yet reads it on appearing.
+    func reveal(approvalID: String) async {
+        if book[approvalID] == nil { await refreshApprovals() }
+        revealedApprovalID = approvalID
+        openWindow()
+    }
+
+    /// The window showed the card: a later opening must not jump there again.
+    func clearReveal() { revealedApprovalID = nil }
 
     func setKillSwitch(_ on: Bool) async {
         guard await presence.verify(on ? "activer l'arrêt d'urgence" : "désactiver l'arrêt d'urgence") else { return }

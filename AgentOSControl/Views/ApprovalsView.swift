@@ -14,13 +14,21 @@ struct ApprovalsView: View {
     }
 
     var body: some View {
-        Group {
-            if shown.isEmpty {
-                ContentUnavailableView("Aucune approbation en attente", systemImage: "checkmark.shield")
-            } else {
-                List(shown) { state in
-                    ApprovalRow(state: state, context: model.contexts[state.id])
+        ScrollViewReader { proxy in
+            Group {
+                if shown.isEmpty {
+                    ContentUnavailableView("Aucune approbation en attente", systemImage: "checkmark.shield")
+                } else {
+                    List(shown) { state in
+                        ApprovalRow(state: state, context: model.contexts[state.id]).id(state.id)
+                    }
                 }
+            }
+            // `initial`: MainView switches to this screen after the click, so it appears with the request set.
+            .onChange(of: model.revealedApprovalID, initial: true) { _, id in
+                guard let id else { return }
+                proxy.scrollTo(id, anchor: .top)
+                model.clearReveal()
             }
         }
         .toolbar {
