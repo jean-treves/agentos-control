@@ -157,6 +157,31 @@ import Testing
         ])
     }
 
+    /// A real run id is a 36-character uuid: it used to eat the cut and leave 7 characters of the title, never
+    /// the ⚠ marks the kernel appends. The prompt shows the id's first 8 characters (as the run list does), the
+    /// date, the start of the title, and a ⚠ when the cut dropped one.
+    @MainActor @Test func theTouchIDPromptShortensARealRunIdAndKeepsTheWarning() async {
+        let reasons = ReasonRecorder()
+        let model = ControlModel(client: makeClient(recorder: RequestRecorder()),
+                                 presence: HumanPresence { reason in await reasons.add(reason); return false },
+                                 notifier: nil, socket: nil)
+        let dismiss = CommandSpec(name: "dismiss", title: "Écarter une relecture", description: "d", interactive: false, params: [])
+        let choice = "0d7c1d2e-8f3b-4a6e-9c1d-2b3e4f5a6b7c · 05/10 10:00 · Market-Maker : quant/ai-infra-model-drift (2026-10-05) ⚠ diff tronqué"
+        _ = await model.runCommand(dismiss, params: ["run": choice])
+        #expect(await reasons.values == [
+            "lancer « Écarter une relecture » sur « 0d7c1d2e · 05/10 10:00 · Market-Maker : quant/ai-infra-model… ⚠ »"
+        ])
+    }
+
+    /// A cut that drops a ⚠ mark keeps one after the ellipsis; a mark still visible is not doubled.
+    @Test func aCutKeepsTheWarningItDropped() {
+        let long = String(repeating: "a", count: 70)
+        #expect(ControlModel.shownInPrompt(long + " ⚠ diff tronqué") == String(repeating: "a", count: 60) + "… ⚠")
+        #expect(ControlModel.shownInPrompt("⚠ " + long) == "⚠ " + String(repeating: "a", count: 58) + "…")
+        #expect(ControlModel.shownInPrompt(long) == String(repeating: "a", count: 60) + "…")
+        #expect(ControlModel.shownInPrompt("court ⚠") == "court ⚠")
+    }
+
     /// A brief's name or a review's title is text from outside: plain (no bidi override, no new line) and cut.
     @MainActor @Test func theTouchIDPromptShowsTheTargetAsPlainCutText() async {
         let reasons = ReasonRecorder()

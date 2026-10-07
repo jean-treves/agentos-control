@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The AgentOS window (spec §16.3): a sidebar of sections; each screen polls only while shown.
@@ -21,8 +22,15 @@ struct MainView: View {
         // A click on an approval's notification asks for its card. `initial`: with the window closed, the
         // request is set before this view exists, so no change would ever be seen.
         .onChange(of: model.revealedApprovalID, initial: true) { _, id in
-            if id != nil { section = .approvals }
+            if Self.shouldSwitchSection(revealed: id, windows: NSApp.windows) { section = .approvals }
         }
+    }
+
+    /// A click on an approval's notification switches to Approbations, except while a sheet is open: leaving the
+    /// section removes the view that presents it, and the sheet with what JT typed (a Drawback prompt, a review).
+    /// The request stays pending; ApprovalsView takes it when JT opens the section himself.
+    static func shouldSwitchSection(revealed: String?, windows: [NSWindow]) -> Bool {
+        revealed != nil && !windows.contains { $0.attachedSheet != nil }
     }
 
     private var selection: Binding<SidebarItem?> {

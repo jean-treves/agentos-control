@@ -223,8 +223,13 @@ final class ControlModel {
     func runCommand(_ spec: CommandSpec, params: [String: String], timeout: TimeInterval? = nil) async -> CommandLaunch? {
         lastError = nil  // a refused Touch ID must not show an older error
         // The prompt names what leaves (the brief, from a row or from the form) or what is decided (the run a
-        // promotion or a dismissal acts on: neither can be undone). A run's choice starts with its id and date.
-        let target = (params["brief"] ?? params["run"]).map { " sur « \(Self.shownInPrompt($0)) »" } ?? ""
+        // promotion or a dismissal acts on: neither can be undone). A run's choice is `<uuid> · dd/mm HH:MM · <title>`
+        // plus ⚠ marks: its id shortens to 8 characters (as in the run list), so the date and the title still show.
+        let run = params["run"].map { choice in
+            let id = choice.prefix { $0 != " " }  // the token before the first space; a short id stays whole
+            return String(id.prefix(8)) + choice.dropFirst(id.count)
+        }
+        let target = (params["brief"] ?? run).map { " sur « \(Self.shownInPrompt($0)) »" } ?? ""
         guard await presence.verify("lancer « \(spec.title) »\(target)") else { return nil }
         do {
             let launch = try await client.runCommand(spec.name, params: params, timeout: timeout)
@@ -274,9 +279,11 @@ final class ControlModel {
     }
 
     /// Text from outside (a brief's name, a review's title) as a Touch ID sentence shows it: plain and cut.
+    /// A cut that drops a ⚠ mark (the kernel puts them after a review's title) keeps one, after the ellipsis.
     static func shownInPrompt(_ text: String) -> String {
         let plain = text.plainText()
-        return plain.count > 60 ? String(plain.prefix(60)) + "…" : plain
+        guard plain.count > 60 else { return plain }
+        return String(plain.prefix(60)) + "…" + (plain.dropFirst(60).contains("⚠") ? " ⚠" : "")
     }
 
     /// What Touch ID says for Promouvoir: the merge lands in the current branch of this project's repository.

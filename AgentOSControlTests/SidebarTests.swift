@@ -37,9 +37,36 @@ import Testing
         #expect(table?.selectedRow == 0)
     }
 
+    /// A click on an approval's notification switches to Approbations, except while a sheet is open: leaving the
+    /// section removes the view that presents it, and the sheet with what JT typed (a Drawback prompt, a
+    /// delegation review, Ménage). The request stays pending until he opens the section himself.
+    @MainActor @Test func aRevealSwitchesSectionUnlessASheetIsOpen() {
+        func window() -> NSWindow {
+            let window = NSWindow(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: true)
+            window.isReleasedWhenClosed = false
+            return window
+        }
+        #expect(MainView.shouldSwitchSection(revealed: "a1", windows: []))
+        #expect(MainView.shouldSwitchSection(revealed: "a1", windows: [window(), window()]))
+        #expect(!MainView.shouldSwitchSection(revealed: "a1", windows: [window(), SheetedWindow(), window()]))
+        #expect(!MainView.shouldSwitchSection(revealed: nil, windows: []))  // nothing was asked for
+    }
+
     private func firstTable(in view: NSView?) -> NSTableView? {
         guard let view else { return nil }
         if let table = view as? NSTableView { return table }
         return view.subviews.lazy.compactMap { firstTable(in: $0) }.first
+    }
+}
+
+/// A window that reports a sheet attached, without running AppKit's modal machinery in the test host.
+private final class SheetedWindow: NSWindow {
+    private let attached = NSWindow(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: true)
+    override var attachedSheet: NSWindow? { attached }
+
+    init() {
+        super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: true)
+        isReleasedWhenClosed = false
+        attached.isReleasedWhenClosed = false
     }
 }
