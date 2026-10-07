@@ -11,7 +11,7 @@ import Testing
         let date = ISO8601DateFormatter().date(from: "2026-09-29T02:03:30Z")!
         let utc = TimeZone(identifier: "UTC")!
         #expect(NightArm.pmsetDate(date, timeZone: utc) == "09/29/26 02:03:30")
-        #expect(NightArm.script(for: date, timeZone: utc)
+        #expect(NightArm.plan(for: date, timeZone: utc).script
                 == "do shell script \"/usr/bin/pmset schedule wake '09/29/26 02:03:30'\" with administrator privileges")
     }
 
@@ -73,8 +73,17 @@ import Testing
         #expect(NightArm.endOfRepeatedHour(after: secondPass, timeZone: utc) == secondPass)
     }
 
+    /// Only the second pass of a repeated hour has an end to move to. Anywhere else the next transition is weeks
+    /// away (2026-07-14 would give 2026-10-25), a wake armed that late with a wrong notice.
+    @Test func theGuardLeavesAnyOtherInstantWhereItIs() {
+        for iso in ["2026-07-14T10:00:00Z", "2027-01-15T10:00:00Z", "2026-10-25T00:35:00Z"] {  // summer, winter, first pass
+            let date = instant(iso)
+            #expect(NightArm.endOfRepeatedHour(after: date, timeZone: paris) == date, "\(iso)")
+        }
+    }
+
     /// pmset knows whole seconds: `Date()` has a fraction, and formatting then parsing drops it. That is
-    /// not an early wake (the guard would push it to the next end of DST, weeks away).
+    /// not an early wake: the plan wakes on the whole second and has nothing to say.
     @Test func aFractionOfASecondIsNotAnEarlyWake() {
         let whole = instant("2026-10-06T01:00:00Z")
         let plan = NightArm.plan(for: whole.addingTimeInterval(0.4), timeZone: paris)

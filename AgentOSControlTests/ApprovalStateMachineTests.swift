@@ -311,14 +311,16 @@ private func routedClient(
         openWindow: @escaping @MainActor () -> Void = {}
     ) -> ControlModel {
         let probe = probe
-        return ControlModel(
+        let model = ControlModel(
             client: routedClient(recorder: recorder, postGate: postGate, journal: journal),
             presence: HumanPresence { _ in
                 await probe.prompt()
                 await touchID?.pass()
                 return present
             },
-            notifier: notifier, socket: nil, openWindow: openWindow)
+            notifier: notifier, socket: nil)
+        model.openWindow = openWindow
+        return model
     }
 
     private func posts() async -> [String] {

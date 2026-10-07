@@ -5,7 +5,7 @@ import Foundation
 enum NightArm {
     /// What `pmset` will really do for an instant: the script to run, the instant it will wake the Mac,
     /// and, only when that is not the instant asked for, the sentence telling JT.
-    struct Plan: Equatable {
+    struct Plan {
         let script: String
         let wake: Date
         let notice: String?
@@ -43,16 +43,15 @@ enum NightArm {
     }
 
     /// First instant after the repeated hour whose second pass contains `date` (03:00 CET for 02:35 CET);
-    /// `date` itself in a zone without daylight-saving time.
+    /// `date` itself anywhere else: no daylight-saving time, or a transition that is not behind it (the next
+    /// one may be weeks away).
     static func endOfRepeatedHour(after date: Date, timeZone: TimeZone) -> Date {
         let before = date.addingTimeInterval(-3600)  // the same wall time, one pass earlier
-        guard let transition = timeZone.nextDaylightSavingTimeTransition(after: before) else { return date }
+        guard let transition = timeZone.nextDaylightSavingTimeTransition(after: before), transition <= date else {
+            return date
+        }
         return transition.addingTimeInterval(
             timeZone.daylightSavingTimeOffset(for: before) - timeZone.daylightSavingTimeOffset(for: date))
-    }
-
-    static func script(for date: Date, timeZone: TimeZone = .current) -> String {
-        plan(for: date, timeZone: timeZone).script
     }
 
     /// `error` is nil when armed, else the message shown to JT; `notice` says when the Mac really wakes

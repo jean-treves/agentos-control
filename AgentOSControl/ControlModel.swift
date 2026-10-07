@@ -25,19 +25,15 @@ final class ControlModel {
     @ObservationIgnored private let notifier: (any ApprovalNotifying)?
     @ObservationIgnored private let socket: ApprovalsSocket?
     /// Brings the main window up; the App sets it (a banner clicked while the window is closed).
-    @ObservationIgnored var openWindow: @MainActor () -> Void
+    @ObservationIgnored var openWindow: @MainActor () -> Void = {}
     @ObservationIgnored private var loops: [Task<Void, Never>] = []
     @ObservationIgnored private let logger = Logger(subsystem: "com.jeantreves.agentoscontrol", category: "model")
 
-    init(
-        client: HostClient, presence: HumanPresence, notifier: (any ApprovalNotifying)?, socket: ApprovalsSocket?,
-        openWindow: @escaping @MainActor () -> Void = {}
-    ) {
+    init(client: HostClient, presence: HumanPresence, notifier: (any ApprovalNotifying)?, socket: ApprovalsSocket?) {
         self.client = client
         self.presence = presence
         self.notifier = notifier
         self.socket = socket
-        self.openWindow = openWindow
         notifier?.onAction = { [weak self] approvalID, approve in
             await self?.handleNotificationAction(approvalID: approvalID, approve: approve)
         }

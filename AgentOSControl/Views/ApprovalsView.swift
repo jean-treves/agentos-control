@@ -5,6 +5,9 @@ struct ApprovalsView: View {
     @Environment(ControlModel.self) private var model
     @State private var engine: String?  // nil: every engine
 
+    /// The screen opens on this filter: a hosted test's only way in, the picker lives in the window's toolbar.
+    init(engine: String? = nil) { _engine = State(initialValue: engine) }
+
     private var engines: [String] { ApprovalOrigin.engines(model.openApprovals.map(\.approval)) }
 
     /// A filter on an engine whose requests are all settled would hide the others: drop it then.
@@ -27,7 +30,10 @@ struct ApprovalsView: View {
             // `initial`: MainView switches to this screen after the click, so it appears with the request set.
             .onChange(of: model.revealedApprovalID, initial: true) { _, id in
                 guard let id else { return }
-                proxy.scrollTo(id, anchor: .top)
+                // A filter on another engine hides the card: drop it. The list is redrawn after this turn, so the
+                // scroll waits for it.
+                if !shown.contains(where: { $0.id == id }) { engine = nil }
+                Task { proxy.scrollTo(id, anchor: .top) }
                 model.clearReveal()
             }
         }
