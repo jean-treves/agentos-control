@@ -62,7 +62,7 @@ Requirements: macOS 26+, Xcode 26+, XcodeGen. No third-party dependency; ad hoc 
 
 | Measure | Value |
 |---|---|
-| Unit tests (Swift Testing, simulated host, Keychain and Touch ID) | 322 tests in 37 suites, all green (re-run 2026-10-07) |
+| Unit tests (Swift Testing, simulated host, Keychain and Touch ID) | 325 tests in 37 suites, all green (re-run 2026-10-07) |
 | Resident memory, installed app with live polling (`ps -o rss=`) | 88.8 MB, flat over 2 minutes (a bare `MenuBarExtra` app measures 81 to 84 MB on the same Mac: shared SwiftUI/AppKit pages) |
 | Physical footprint (`footprint`), the app's own memory | 19 MB, flat over 2 minutes |
 | End to end (E2E-17, 2026-09-24): governed Claude run asks to run a shell command | notification shown 0.5 s after the request; Approve → Touch ID → decision sent 0.7 s after the click; receipt `decider: human:jean`; the run went on to its next tool call |
