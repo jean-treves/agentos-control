@@ -25,7 +25,7 @@ nonisolated enum ApprovalOrigin {
         let approves: Bool
         let prominent: Bool
         let destructive: Bool
-        var id: String { title }
+        var id: Bool { approves }  // a card has one button per host decision
     }
 
     /// A card's buttons in display order, the highlighted one first, and the line under them.

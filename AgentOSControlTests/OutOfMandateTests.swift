@@ -54,16 +54,21 @@ import UserNotifications
 
     /// The menu bar popover shows the same cards in a fixed width. The long out-of-mandate labels have to fit it,
     /// one button above the other: side by side they need about 584 pt, and the words cut are the ones this change
-    /// adds (review of 7d).
+    /// adds (review of 7d). In every phase: beside the stack, « Touch ID… » and the spinner pushed the row over
+    /// (430 and 396 pt for 388) just while the buttons are greyed out.
     @MainActor @Test func theOutOfMandateButtonsFitTheMenuBarPopover() {
         let model = ControlModel(
             client: makeClient(recorder: RequestRecorder()), presence: .deviceOwner, notifier: nil, socket: nil)
         let room = MenuBarView.popoverWidth - 2 * 16  // the popover's `.padding()`, on each side
+        let phases: [ApprovalPhase] = [.pending, .awaitingPresence, .deciding(approve: true)]
         for outOfMandate in [true, false] {
-            let state = ApprovalState(approval: approval(outOfMandate: outOfMandate), phase: .pending)
-            let row = NSHostingView(rootView: ApprovalRow(state: state, context: nil).environment(model))
-            let needs = row.fittingSize.width
-            #expect(needs <= room, "out of mandate \(outOfMandate): the row needs \(needs) pt, the popover leaves \(room)")
+            for phase in phases {
+                let state = ApprovalState(approval: approval(outOfMandate: outOfMandate), phase: phase)
+                let row = NSHostingView(rootView: ApprovalRow(state: state, context: nil).environment(model))
+                let needs = row.fittingSize.width
+                #expect(needs <= room,
+                        "out of mandate \(outOfMandate), \(phase): the row needs \(needs) pt, the popover leaves \(room)")
+            }
         }
     }
 

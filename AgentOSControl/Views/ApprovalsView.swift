@@ -76,22 +76,30 @@ struct ApprovalRow: View {
             let wording = ApprovalOrigin.wording(for: state.approval)
             HStack {
                 if ApprovalOrigin.isOutOfMandate(state.approval) {
-                    // Stacked, the likely answer on top: side by side the two labels are wider than the menu bar
-                    // popover that shows this card too.
-                    VStack(alignment: .leading) { buttons(wording) }
+                    // Stacked, the likely answer on top, and the phase under the buttons: beside them the row would be
+                    // wider than the menu bar popover that shows this card too.
+                    VStack(alignment: .leading) {
+                        buttons(wording)
+                        phaseIndicator
+                    }
                 } else {
                     buttons(wording)
-                }
-                switch state.phase {
-                case .awaitingPresence: Text("Touch ID…").font(.caption)
-                case .deciding: ProgressView().controlSize(.small)
-                default: EmptyView()
+                    phaseIndicator
                 }
             }
             .disabled(state.phase != .pending)
             if let note = wording.note { Text(note).font(.caption).foregroundStyle(.secondary) }
         }
         .padding(.vertical, 4)
+    }
+
+    /// « Touch ID… » while the presence check runs, a spinner while the decision is sent.
+    @ViewBuilder private var phaseIndicator: some View {
+        switch state.phase {
+        case .awaitingPresence: Text("Touch ID…").font(.caption)
+        case .deciding: ProgressView().controlSize(.small)
+        default: EmptyView()
+        }
     }
 
     /// The card's buttons as `ApprovalOrigin.wording` lists them: each sends the host decision it carries.
