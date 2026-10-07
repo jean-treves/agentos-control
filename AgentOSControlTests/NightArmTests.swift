@@ -74,9 +74,15 @@ import Testing
     }
 
     /// Only the second pass of a repeated hour has an end to move to. Anywhere else the next transition is weeks
-    /// away (2026-07-14 would give 2026-10-25), a wake armed that late with a wrong notice.
+    /// away (2026-07-14 would give 2026-10-25), a wake armed that late with a wrong notice; and just after the
+    /// spring transition the offsets are reversed (2027-03-28T01:30Z would give 00:00Z, before the date).
     @Test func theGuardLeavesAnyOtherInstantWhereItIs() {
-        for iso in ["2026-07-14T10:00:00Z", "2027-01-15T10:00:00Z", "2026-10-25T00:35:00Z"] {  // summer, winter, first pass
+        let others = [
+            "2026-07-14T10:00:00Z", "2027-01-15T10:00:00Z",  // summer, winter
+            "2026-10-25T00:35:00Z",  // first pass of the repeated hour
+            "2027-03-28T01:30:00Z",  // just after the spring transition: no repeated hour to end
+        ]
+        for iso in others {
             let date = instant(iso)
             #expect(NightArm.endOfRepeatedHour(after: date, timeZone: paris) == date, "\(iso)")
         }

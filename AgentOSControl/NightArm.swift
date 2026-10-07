@@ -43,15 +43,14 @@ enum NightArm {
     }
 
     /// First instant after the repeated hour whose second pass contains `date` (03:00 CET for 02:35 CET);
-    /// `date` itself anywhere else: no daylight-saving time, or a transition that is not behind it (the next
-    /// one may be weeks away).
+    /// `date` itself anywhere else, never an earlier instant: no daylight-saving time, no transition behind it
+    /// (the next one may be weeks away), or a spring one (the clock went forward, nothing repeats).
     static func endOfRepeatedHour(after date: Date, timeZone: TimeZone) -> Date {
         let before = date.addingTimeInterval(-3600)  // the same wall time, one pass earlier
-        guard let transition = timeZone.nextDaylightSavingTimeTransition(after: before), transition <= date else {
-            return date
-        }
-        return transition.addingTimeInterval(
-            timeZone.daylightSavingTimeOffset(for: before) - timeZone.daylightSavingTimeOffset(for: date))
+        let shift = timeZone.daylightSavingTimeOffset(for: before) - timeZone.daylightSavingTimeOffset(for: date)
+        guard shift > 0, let transition = timeZone.nextDaylightSavingTimeTransition(after: before), transition <= date
+        else { return date }  // only the end of daylight-saving time (a positive shift) repeats an hour
+        return transition.addingTimeInterval(shift)
     }
 
     /// `error` is nil when armed, else the message shown to JT; `notice` says when the Mac really wakes

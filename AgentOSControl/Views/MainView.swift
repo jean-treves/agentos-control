@@ -21,6 +21,7 @@ struct MainView: View {
         .frame(minWidth: 900, minHeight: 560)
         // A click on an approval's notification asks for its card. `initial`: with the window closed, the
         // request is set before this view exists, so no change would ever be seen.
+        // Deferred by an open sheet, the request does not expire: a window opened later honours it once.
         .onChange(of: model.revealedApprovalID, initial: true) { _, id in
             if Self.shouldSwitchSection(revealed: id, windows: NSApp.windows) { section = .approvals }
         }

@@ -18,6 +18,9 @@ final class ControlModel {
     /// nil until the notifier answers (or forever without one).
     private(set) var notificationsAuthorized: Bool?
     /// The approval JT asked to see by clicking its notification; the window shows that card, then clears it.
+    /// It does not expire: while a sheet is open the window waits (`MainView.shouldSwitchSection`), so if JT closes
+    /// the sheet without opening Approbations and later reopens the window, the app jumps to Approbations once,
+    /// and `clearReveal` spends the request.
     private(set) var revealedApprovalID: String?
     var lastError: String?
 
