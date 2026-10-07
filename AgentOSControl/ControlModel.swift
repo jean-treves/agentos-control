@@ -222,8 +222,9 @@ final class ControlModel {
     /// `timeout` nil keeps the session's 5 s; a command that moves files or waits for Haiku asks for more.
     func runCommand(_ spec: CommandSpec, params: [String: String], timeout: TimeInterval? = nil) async -> CommandLaunch? {
         lastError = nil  // a refused Touch ID must not show an older error
-        // The prompt names the brief: from a row or from the form, JT sees which note leaves.
-        let target = params["brief"].map { " sur « \($0) »" } ?? ""
+        // The prompt names what leaves (the brief, from a row or from the form) or what is decided (the run a
+        // promotion or a dismissal acts on: neither can be undone). A run's choice starts with its id and date.
+        let target = (params["brief"] ?? params["run"]).map { " sur « \(Self.shownInPrompt($0)) »" } ?? ""
         guard await presence.verify("lancer « \(spec.title) »\(target)") else { return nil }
         do {
             let launch = try await client.runCommand(spec.name, params: params, timeout: timeout)
@@ -272,12 +273,15 @@ final class ControlModel {
         }
     }
 
+    /// Text from outside (a brief's name, a review's title) as a Touch ID sentence shows it: plain and cut.
+    static func shownInPrompt(_ text: String) -> String {
+        let plain = text.plainText()
+        return plain.count > 60 ? String(plain.prefix(60)) + "…" : plain
+    }
+
     /// What Touch ID says for Promouvoir: the merge lands in the current branch of this project's repository.
-    /// The title is text from outside: plain and cut.
     static func promotionReason(project: String, title: String) -> String {
-        let name = title.plainText()
-        let shown = name.count > 60 ? String(name.prefix(60)) + "…" : name
-        return "promouvoir dans \(project.plainText()) les changements de « \(shown) »"
+        "promouvoir dans \(project.plainText()) les changements de « \(shownInPrompt(title)) »"
     }
 
     /// Touch ID, then the merge of the conversation's worktree (D36); nil when JT did not confirm or the host

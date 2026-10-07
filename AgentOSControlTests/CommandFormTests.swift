@@ -135,6 +135,43 @@ import Testing
         _ = await model.runCommand(passover, params: [:])
         #expect(await reasons.values == ["lancer « Passover » sur « 2026-09-29-dm.md »", "lancer « Passover »"])
     }
+
+    /// Promouvoir and Écarter cannot be undone and the form opens on the newest review: the prompt says which
+    /// run. The choice is `<run id> · dd/mm HH:MM · <title>`; the cut keeps its beginning, id and date.
+    @MainActor @Test func theTouchIDPromptOfPromoteAndDismissNamesTheRun() async {
+        let reasons = ReasonRecorder()
+        let model = ControlModel(client: makeClient(recorder: RequestRecorder()),
+                                 presence: HumanPresence { reason in await reasons.add(reason); return false },
+                                 notifier: nil, socket: nil)
+        let promote = CommandSpec(name: "promote", title: "Promouvoir", description: "d", interactive: false, params: [])
+        let dismiss = CommandSpec(name: "dismiss", title: "Écarter une relecture", description: "d", interactive: false, params: [])
+        let run = "r1 · 05/10 10:00 · Market-Maker : quant/ai-infra-model-drift (2026-10-05)"
+        _ = await model.runCommand(promote, params: ["run": run])
+        _ = await model.runCommand(dismiss, params: ["run": run])
+        _ = await model.runCommand(dismiss, params: [:])  // no brief, no run: today's sentence
+        let shown = "r1 · 05/10 10:00 · Market-Maker : quant/ai-infra-model-drift…"
+        #expect(await reasons.values == [
+            "lancer « Promouvoir » sur « \(shown) »",
+            "lancer « Écarter une relecture » sur « \(shown) »",
+            "lancer « Écarter une relecture »",
+        ])
+    }
+
+    /// A brief's name or a review's title is text from outside: plain (no bidi override, no new line) and cut.
+    @MainActor @Test func theTouchIDPromptShowsTheTargetAsPlainCutText() async {
+        let reasons = ReasonRecorder()
+        let model = ControlModel(client: makeClient(recorder: RequestRecorder()),
+                                 presence: HumanPresence { reason in await reasons.add(reason); return false },
+                                 notifier: nil, socket: nil)
+        let dismiss = CommandSpec(name: "dismiss", title: "Écarter une relecture", description: "d", interactive: false, params: [])
+        let passover = CommandSpec(name: "passover", title: "Passover", description: "d", interactive: false, params: [])
+        _ = await model.runCommand(dismiss, params: ["run": "r2 · 05/10 10:00 · Evil\u{202E}\nTitle"])
+        _ = await model.runCommand(passover, params: ["brief": String(repeating: "b", count: 100)])
+        #expect(await reasons.values == [
+            "lancer « Écarter une relecture » sur « r2 · 05/10 10:00 · Evil  Title »",
+            "lancer « Passover » sur « " + String(repeating: "b", count: 60) + "… »",
+        ])
+    }
 }
 
 actor ReasonRecorder {
