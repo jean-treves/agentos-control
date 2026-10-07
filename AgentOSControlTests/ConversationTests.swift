@@ -80,7 +80,7 @@ private actor StubHost {
     static let detail = """
     {"id":"0f0e0d0c-0b0a-4908-8706-050403020100","project":"quant/x","mode":"modify","title":"Tests DM",
      "created_at":"2026-10-04T10:00:00+00:00","effort":"medium","turns":2,
-     "worktree":"/Users/jean/.local/share/agentos/worktrees/0f0e0d0c/0f0e0d0c","last_status":"completed","retry_at":null,
+     "worktree":"/Users/me/.local/share/agentos/worktrees/0f0e0d0c/0f0e0d0c","last_status":"completed","retry_at":null,
      "cards":[{"title":"Test DM","project":"quant/x","goal":"Ajouter le test.\\nSans toucher le reste.","context":"",
                "done_when":"pytest vert","verify":"uv run pytest -q","output_mode":"pr","agentic_mode":"accept_diffs",
                "executor_model":"auto:smart","sonnet_effort":"medium"}],
