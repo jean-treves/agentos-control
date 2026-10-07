@@ -85,8 +85,8 @@ d'attendre l'utilisateur : il peut s'arrêter là (fait F9).
 ## Origine d'une demande
 Chaque demande dit qui la pose : moteur, modèle de l'exécutant (« gemma via Hermès »), run, mode agentique, et
 « remontée par l'arbitre » avec sa raison. Une demande posée pendant une conversation en modification porte
-« Conversation avec Sonnet ». Hors mandat : Refuser (le run continue sans) ou Relancer avec ce mandat
-(le run s'arrête, un brief élargi attend ta validation).
+« Conversation avec Sonnet ». Hors mandat : Refuser (le run continue sans, bouton par défaut) ou Élargir le
+mandat (le run s'arrête, un brief élargi attend ta validation dans Commandes ▸ Passover).
 
 ## Arbitre
 Sonnet 5.5, appelé seulement pour une demande « confirm » dans le mandat, en Accepter les diffs ou Auto. Il

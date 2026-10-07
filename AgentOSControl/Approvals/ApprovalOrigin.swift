@@ -8,8 +8,38 @@ nonisolated enum ApprovalOrigin {
 
     static func modeLabel(_ mode: String) -> String { modeLabels[mode] ?? mode }
 
-    /// Out of mandate: « Approuver » means « Relancer avec ce mandat », never « do it ».
+    /// Out of mandate (decision D16) the host's `approve` stops the run and drafts a widened brief that waits for JT's
+    /// validation in Commandes ▸ Passover, and `deny` lets the run continue without. Yes and no would mislead (JT
+    /// clicked « Relancer avec ce mandat » meaning to refuse, E2E 32): the buttons say what happens.
     static func isOutOfMandate(_ approval: Approval) -> Bool { approval.actionClass == "out_of_mandate" }
+
+    /// Refusing is the likely answer: its label is the same on the card and in the banner.
+    static let refuseLabel = "Refuser : le run continue sans"
+    /// The banner's button for `approve`: the card's longer label does not fit.
+    static let widenBannerLabel = "Élargir le mandat (Touch ID)"
+
+    /// What a card's two buttons say, named by the host decision they send, and the line under them.
+    nonisolated struct Wording: Equatable, Sendable {
+        let approve: String
+        let deny: String
+        let note: String?
+    }
+
+    static func wording(for approval: Approval) -> Wording {
+        guard isOutOfMandate(approval) else {
+            return Wording(approve: "Approuver (Touch ID)", deny: "Refuser", note: nil)
+        }
+        return Wording(
+            approve: "Élargir le mandat : arrêter le run, nouveau brief (Touch ID)", deny: refuseLabel,
+            note: "Le brief élargi attendra ta validation dans Commandes ▸ Passover.")
+    }
+
+    /// What Touch ID says for `approve`: out of mandate it stops the run, so it does not say « approuver ».
+    static func approveReason(_ approval: Approval) -> String {
+        let what = approval.capability ?? "une action"
+        return isOutOfMandate(approval)
+            ? "élargir le mandat de « \(what) » : le run s'arrête" : "approuver « \(what) » pour AgentOS"
+    }
 
     static func label(_ approval: Approval) -> String {
         let engine: String? = switch approval.originEngine {

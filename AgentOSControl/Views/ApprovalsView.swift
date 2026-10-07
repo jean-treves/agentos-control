@@ -73,14 +73,19 @@ struct ApprovalRow: View {
             if !origin.isEmpty {
                 Text(verbatim: origin).font(.caption).foregroundStyle(.secondary)
             }
+            let wording = ApprovalOrigin.wording(for: state.approval)
             HStack {
-                let outOfMandate = ApprovalOrigin.isOutOfMandate(state.approval)
-                // T8.6: only the label differs for now; « relancer avec ce mandat » gets its server semantics there.
-                Button(outOfMandate ? "Relancer avec ce mandat (Touch ID)" : "Approuver (Touch ID)") {
-                    Task { await model.approve(state.id) }
+                if ApprovalOrigin.isOutOfMandate(state.approval) {
+                    // Refusing lets the run go on, the likely answer: it is the default. Widening the mandate stops it.
+                    Button(wording.deny) { Task { await model.deny(state.id) } }
+                        .buttonStyle(.borderedProminent)
+                    Button(wording.approve) { Task { await model.approve(state.id) } }
+                        .buttonStyle(.bordered)
+                } else {
+                    Button(wording.approve) { Task { await model.approve(state.id) } }
+                        .buttonStyle(.borderedProminent)
+                    Button(wording.deny, role: .destructive) { Task { await model.deny(state.id) } }
                 }
-                .buttonStyle(.borderedProminent)
-                Button("Refuser", role: .destructive) { Task { await model.deny(state.id) } }
                 switch state.phase {
                 case .awaitingPresence: Text("Touch ID…").font(.caption)
                 case .deciding: ProgressView().controlSize(.small)
@@ -88,6 +93,7 @@ struct ApprovalRow: View {
                 }
             }
             .disabled(state.phase != .pending)
+            if let note = wording.note { Text(note).font(.caption).foregroundStyle(.secondary) }
         }
         .padding(.vertical, 4)
     }

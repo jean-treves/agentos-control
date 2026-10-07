@@ -158,7 +158,7 @@ final class ControlModel {
 
     func approve(_ id: String) async {
         guard transition(id, .userApproved, from: .pending) != nil, let approval = book[id]?.approval else { return }
-        let present = await presence.verify("approuver « \(approval.capability ?? "une action") » pour AgentOS")
+        let present = await presence.verify(ApprovalOrigin.approveReason(approval))
         let event: ApprovalEvent = present ? .presenceConfirmed : .presenceFailed
         guard transition(id, event, from: .awaitingPresence) == .deciding(approve: true) else { return }
         await send(id, approve: true)
