@@ -1,3 +1,5 @@
+
+
 # AgentOS Control
 
 AgentOS Control is a native macOS menu bar app for supervising coding agents managed by AgentOS. It brings pending approvals, run status, host health, agent activity, diffs, and selected control actions into one place, so a human can review and govern work without keeping the web cockpit open.
@@ -17,7 +19,7 @@ The app can:
 
 ## Architecture flow
 
-![AgentOS Control approval and execution path](docs/architecture.png)
+![AgentOS Control approval and execution path](<img width="1440" height="900" alt="architecture visual-check 1440x900 light" src="https://github.com/user-attachments/assets/531359f2-23a5-476b-8b3b-944e31fc0f9f" />)
 
 [Download the standalone diagram HTML](docs/architecture.html) and open it in a browser for the interactive view.
 
