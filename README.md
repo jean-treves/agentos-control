@@ -1,68 +1,69 @@
 # AgentOS Control
 
-Menu bar app for macOS that lets a human govern autonomous coding agents run by
-AgentOS (JT's governed agent runtime): approve or deny risky tool calls from a notification (approve requires
-Touch ID), stop everything with a kill switch, and watch runs, tasks, host health and a live
-"floor" of the agents at work, without opening a browser.
+AgentOS Control is a native macOS menu bar app for supervising coding agents managed by AgentOS. It brings pending approvals, run status, host health, agent activity, diffs, and selected control actions into one place, so a human can review and govern work without keeping the web cockpit open.
 
-## Problem
+It addresses a practical failure mode: approval requests can expire when the web cockpit is not being watched. The app delivers those requests as macOS notifications, provides context for reviewing them, and requires local human authentication before approval.
 
-AgentOS pauses an agent run whenever policy says a human must confirm an action (write a file,
-run a shell command). The web cockpit only helps if it is open: approvals expired unanswered and
-tripped the circuit breaker (2026-09-21, three cards timed out). The decision has to reach the
-human where they are, and the approve path must prove a human is actually there.
+## Project overview
+
+AgentOS is the governed runtime; AgentOS Control is its macOS control surface. The app talks to the AgentOS host-v1 API on `127.0.0.1:3107`. It is not an agent runner or a replacement for the host's policy engine: the host remains responsible for enforcing policies and executing decisions.
+
+The app can:
+
+- Notify the user of pending approvals and let them approve or deny from the notification.
+- Show runs, tasks, host health, agent dialogue, activity, diffs, commits, and other host-provided status.
+- Expose guarded controls such as the kill switch, breaker reset, commands, cleanup, delegation, and promotion.
+- Offer read-only observation mode with `--readOnly YES`.
+
+## Safety approach
+
+Safety is enforced as a chain between AgentOS and the app:
+
+- **Host-side policy remains authoritative.** AgentOS classifies tool actions and decides which are automatic, require confirmation, or are forbidden. AgentOS Control does not replace or weaken those rules.
+- **Control requests require the host token.** The app reads the bearer token from macOS Keychain for each control action and does not log it. If the token is unavailable, it sends no control request. The host API is loopback-only; status reads are unauthenticated, while control routes require authentication.
+- **Approvals require local presence.** An approval can be sent only after macOS device-owner authentication succeeds (Touch ID where available, with the system authentication fallback). Denial does not require authentication. The approval state machine prevents duplicate or stale decisions and treats a decision made elsewhere as resolved.
+- **Sensitive actions add review steps.** The kill switch and breaker reset require authentication. Cleanup shows the proposed fixed list before applying it and the host refuses a second application. Delegation displays the full text before authentication and launch; promotion names the affected project and conversation.
+- **Actions are observable.** The app exposes runs, journal events, diffs, and commits supplied by the host. The host records decisions and control events in its journal.
+
+These controls reduce accidental or unauthorized actions within the AgentOS workflow; they are not a guarantee against a compromised Mac, a malicious process running as the user, a compromised AgentOS host, or work performed outside AgentOS.
+
+## Supporting evidence
+
+The repository includes unit tests for the approval state machine, authentication flow, API request construction and decoding, notification handling, and other app behavior.
+
+| Evidence | Result |
+|---|---|
+| Swift unit tests with simulated host, Keychain, and authentication | 387 tests in 41 suites passed; last recorded rerun: 2026-10-08 |
+| End-to-end scenario E2E-17, 2026-09-24 | A governed Claude shell-command request appeared as a notification 0.5 s after the request. After approval and local authentication, the decision was sent 0.7 s after the click; the host receipt identified `human:jean`, and the run continued. |
+
+These are recorded results, not a claim that the suite was rerun for every change. The E2E result covers one scenario on the recorded setup.
 
 ## How it works
 
-- `HostClient` (Swift actor) speaks the frozen host-v1 API on `http://127.0.0.1:3107`. Reads are
-  unauthenticated; control routes carry the host's bearer token, read from the Keychain through
-  `/usr/bin/security` for every action and never logged. No token, no request.
-- New approvals are polled every 2 s (the host's WebSocket only announces resolutions and the kill
-  switch); each one becomes a notification with Approve and Deny, and clicking the notification
-  opens the app on its card.
-- Each approval follows a pure state machine: a decision is sent only from the `deciding` state,
-  and `approve` reaches it only after Touch ID. Late Touch ID answers, decisions taken elsewhere,
-  our own decision echoed by the socket and polls racing a POST are all handled and unit-tested.
-- Touch ID also guards the kill switch (both ways) and the breaker reset. Deny needs none.
-- A run's detail can open two read-only terminals (Claude, Hermès) on the host's dialogue socket
-  (`/ws/runs/{id}/dialogue`). Lines are masked by the host before they are written; the app still strips
-  control characters, caps the buffer at 2 000 lines and shows every line as plain text. Scrolling up pauses
-  the follow, coming back to the end resumes it. Clocks are this Mac's local time (the host stamps UTC);
-  « Copier » puts the whole pane on the pasteboard as plain text; an empty pane says « connexion… » or
-  « aucune ligne pour ce run ». The run header counts the run's journal events. Haiku's notes and the arbiter's decisions show as one line
-  in the run's timeline.
-- Runs ▸ Ménage… lists what Haiku proposes to tidy (worktrees and temp folders of finished runs, and how many
-  are kept on purpose); « Appliquer » asks for Touch ID and the host applies the frozen list once (a second apply
-  is refused; the first report stays on screen). The two cleanup commands are not in the Commands tab: the list
-  must be seen before it is applied.
-- Conversation opens a chat with Sonnet per project and mode (read, or modify in a worktree of its own). The
-  transcript streams from the host (`/ws/conversations/{id}`), a reply the host cut keeps its « …[+N caractères] »,
-  and the header gives the 5 h quota or, after a refusal on another limit (the weekly one), the day and time the
-  turn can be sent again; nothing is sent while the quota is spent. The detail is polled every 3 s while Sonnet
-  answers and every 15 s otherwise, the list every 30 s.
-- The delegation cards Sonnet proposes are edited in place, each with an identity of its own (a poll that shrinks
-  the list cannot crash an editor). « Déléguer N tâche(s)… » first shows every card in full, as plain text and
-  exactly as the host will seal it, then asks for Touch ID, then makes one host call that creates, seals and
-  launches the briefs. The number of the cards that were read (`cards_seq`) goes with the call: cards Sonnet sends
-  in the meantime stay in the conversation, and a review left open under new cards is closed. « Promouvoir »
-  merges the conversation's worktree; its Touch ID prompt names the project and the conversation.
+- `HostClient` is a Swift actor that speaks the frozen host-v1 API at `http://127.0.0.1:3107`. Reads are unauthenticated; control routes use the Keychain bearer token.
+- Pending approvals are polled every 2 seconds. The approvals WebSocket announces resolutions and kill-switch changes. Notifications open the corresponding approval in the app.
+- The approval state machine handles authentication delays, decisions made in another client, echoed socket events, and races between polling and a POST.
+- Run dialogue panes are read-only. The host masks lines before sending them; the app strips control characters, caps each buffer at 2,000 lines, and renders the content as plain text.
+- Diff and commit views display host-provided, redacted information. Secret-looking files are listed without their contents.
+- Cleanup and delegation require the user to review the exact proposed items or text before the authenticated action is sent.
+
+## Limitations
+
+- **Single-machine scope:** the app targets macOS and a local AgentOS host. It is not a remote administration client or a general-purpose agent safety layer.
+- **Host dependency:** the host must be running and reachable, and its policy, API, and token handling must be correctly configured. The app's UI is not the enforcement boundary.
+- **Local trust boundary:** API traffic uses plain HTTP over loopback. Local status reads are unauthenticated, and the app cannot protect against a compromised host, user account, or another process with equivalent access.
+- **Authentication fallback:** macOS device-owner authentication may allow the account password when Touch ID is unavailable; the app relies on the system authentication result.
+- **Polling delay:** pending approvals are checked every 2 seconds, so notification delivery is not instantaneous or guaranteed.
+- **Compatibility and distribution:** the app requires macOS 26+, Xcode 26+, and XcodeGen. The build uses ad hoc signing; no third-party dependencies are required.
+- **Evidence age and scope:** the recorded test run is from 2026-10-08, and the E2E result covers one scenario from 2026-09-24. Neither establishes the absence of defects or covers every host failure mode.
 
 ## Build, test, install
 
 ```bash
 xcodegen generate
 xcodebuild test -project AgentOSControl.xcodeproj -scheme AgentOSControl -destination 'platform=macOS' -derivedDataPath build
-Scripts/build_app.sh     # Release, ad hoc signature, /Applications/AgentOS.app (archives the former AgentOS Control.app)
+Scripts/build_app.sh
 open "/Applications/AgentOS.app" --args -readOnly YES   # optional: observe only, never acts
 ```
 
-Requirements: macOS 26+, Xcode 26+, XcodeGen. No third-party dependency; ad hoc signing only.
-
-## Results (2026-09-23, macOS 27.0, Xcode 27.0)
-
-| Measure | Value |
-|---|---|
-| Unit tests (Swift Testing, simulated host, Keychain and Touch ID) | 325 tests in 37 suites, all green (re-run 2026-10-07) |
-| Resident memory, installed app with live polling (`ps -o rss=`) | 88.8 MB, flat over 2 minutes (a bare `MenuBarExtra` app measures 81 to 84 MB on the same Mac: shared SwiftUI/AppKit pages) |
-| Physical footprint (`footprint`), the app's own memory | 19 MB, flat over 2 minutes |
-| End to end (E2E-17, 2026-09-24): governed Claude run asks to run a shell command | notification shown 0.5 s after the request; Approve → Touch ID → decision sent 0.7 s after the click; receipt `decider: human:jean`; the run went on to its next tool call |
+Requirements: macOS 26+, Xcode 26+, XcodeGen. No third-party dependency; the app is ad hoc signed.
