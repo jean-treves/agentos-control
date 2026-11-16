@@ -15,6 +15,14 @@ The app can:
 - Expose guarded controls such as the kill switch, breaker reset, commands, cleanup, delegation, and promotion.
 - Offer read-only observation mode with `--readOnly YES`.
 
+## Architecture flow
+
+![AgentOS Control approval and execution path](docs/architecture.png)
+
+[Download the standalone diagram HTML](docs/architecture.html) and open it in a browser for the interactive view.
+
+The host evaluates and executes agent actions. AgentOS Control provides the human approval and observation surface.
+
 ## Safety approach
 
 Safety is enforced as a chain between AgentOS and the app:
@@ -37,6 +45,12 @@ The repository includes unit tests for the approval state machine, authenticatio
 | End-to-end scenario E2E-17, 2026-09-24 | A governed Claude shell-command request appeared as a notification 0.5 s after the request. After approval and local authentication, the decision was sent 0.7 s after the click; the host receipt identified `human:jean`, and the run continued. |
 
 These are recorded results, not a claim that the suite was rerun for every change. The E2E result covers one scenario on the recorded setup.
+
+Representative tests:
+- [Approval state machine and stale/duplicate decision handling](AgentOSControlTests/ApprovalStateMachineTests.swift)
+- [Host API requests, bearer token handling, and response decoding](AgentOSControlTests/HostClientDecodingTests.swift)
+- [Approval notification choices and presence-gated decisions](AgentOSControlTests/NetworkCardTests.swift)
+
 
 ## How it works
 
@@ -65,5 +79,7 @@ xcodebuild test -project AgentOSControl.xcodeproj -scheme AgentOSControl -destin
 Scripts/build_app.sh
 open "/Applications/AgentOS.app" --args -readOnly YES   # optional: observe only, never acts
 ```
+
+To install from source, run Scripts/build_app.sh. It builds the Release app, ad hoc signs it, and installs it at /Applications/AgentOS.app; if the older AgentOS Control.app exists, the script archives it. This README does not link to a downloadable signed release.
 
 Requirements: macOS 26+, Xcode 26+, XcodeGen. No third-party dependency; the app is ad hoc signed.
