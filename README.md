@@ -21,7 +21,7 @@ The app can:
 
 ![AgentOS Control approval and execution path](./architecture.visual-check.1440x900.light.png)
 
-[View the interactive standalone diagram](https://github.io) in your browser.
+[View the interactive standalone diagram](https://jean-treves.github.io/agentos-control/architecture.html) in your browser.
 
 The host evaluates and executes agent actions. AgentOS Control provides the human approval and observation surface.
 
