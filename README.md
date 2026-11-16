@@ -19,9 +19,7 @@ The app can:
 
 ## Architecture flow
 
-![AgentOS Control approval and execution path](./architecture.visual-check.1440x900.light.png)
-
-[View the interactive standalone diagram](https://jean-treves.github.io/agentos-control/architecture.html) in your browser.
+[![AgentOS Control approval and execution path](./architecture.visual-check.1440x900.light.png)](https://jean-treves.github.io/agentos-control/architecture.html)
 
 The host evaluates and executes agent actions. AgentOS Control provides the human approval and observation surface.
 
